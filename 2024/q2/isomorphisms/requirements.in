@@ -1,0 +1,12 @@
+# List top-level Python requirements here.
+#
+#   # Generate a full list of dependencies into requirements.txt
+#   pip-compile
+#
+#   # Install dependencies into local environment
+#   pip-sync
+#
+
+click
+requests
+tree_sitter_languages
