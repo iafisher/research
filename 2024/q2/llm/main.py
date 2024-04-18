@@ -12,13 +12,17 @@ Write an N-paragraph essay about X topic.
 
 import math
 import time
+from typing import List
+
 from openai import OpenAI
 
 
 def main():
     fpath = "essay-" + str(math.floor(time.time())) + ".txt"
 
-    outline = generate_outline()
+    outline = generate_outline(
+        "the home front of the United States during World War II", 5
+    )
     append_to_file(fpath, "\n".join(outline))
 
     paragraphs = outline_to_paragraphs(outline)
@@ -45,7 +49,7 @@ def copy_edit_paragraphs(paragraphs: List[str]) -> List[str]:
 
 def outline_to_paragraphs(outline: List[str]) -> List[str]:
     paragraphs = []
-    for line in outline.splitlines():
+    for line in outline:
         para = ai(
             """
             You are an essay-writing assistant. You will be given a line of text and it is your job
@@ -55,17 +59,19 @@ def outline_to_paragraphs(outline: List[str]) -> List[str]:
         )
         paragraphs.append(para)
 
+    return paragraphs
 
-def generate_outline(topic: str) -> List[str]:
+
+def generate_outline(topic: str, n: int) -> List[str]:
     outline = ai(
-        """
-        Given a topic, generate an outline for an 8 paragraph essay about that topic. The outline
+        f"""
+        Given a topic, generate an outline for a {n} paragraph essay about that topic. The outline
         should have one line for each paragraph with a brief description of what the paragraph will
         cover. The descriptions do not have to be complete sentences, but should convey enough
         information to be fleshed out into a full paragraph. One line per paragraph. No bullet
         points or other text formatting.
         """,
-        "the home front of the United States during World War II",
+        topic,
     )
     return outline.splitlines()
 
