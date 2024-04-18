@@ -12,6 +12,9 @@ __pycache__
 .venv
 /dist
 *.egg-info
+.ipynb_checkpoints
 
 # JavaScript
 node_modules/
+
+.env
