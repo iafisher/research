@@ -17,7 +17,6 @@ repos:
     -   id: trailing-whitespace
     # Python
     -   id: check-ast
-    -   id: check-docstring-first
     -   id: debug-statements
     # Other languages
     -   id: check-json
