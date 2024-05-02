@@ -1,2 +1,6 @@
+matplotlib
+mnist
 numpy
+pandas
+tensorflow
 torch
