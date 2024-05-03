@@ -112,8 +112,12 @@ python-dateutil==2.9.0.post0
     #   pandas
 pytz==2024.1
     # via pandas
+regex==2024.4.28
+    # via tiktoken
 requests==2.31.0
-    # via tensorflow
+    # via
+    #   tensorflow
+    #   tiktoken
 rich==13.7.1
     # via keras
 six==1.16.0
@@ -135,6 +139,8 @@ tensorflow-io-gcs-filesystem==0.37.0
     # via tensorflow
 termcolor==2.4.0
     # via tensorflow
+tiktoken==0.6.0
+    # via -r requirements.in
 torch==2.3.0
     # via -r requirements.in
 typing-extensions==4.11.0

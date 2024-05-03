@@ -3,4 +3,5 @@ mnist
 numpy
 pandas
 tensorflow
+tiktoken
 torch
