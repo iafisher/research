@@ -4,11 +4,148 @@ from pathlib import Path
 
 import tiktoken
 import torch
+from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
 
 # https://en.wikisource.org/wiki/The_Verdict
 the_verdict = Path("the-verdict.txt").read_text()
+
+
+class SelfAttention(nn.Module):
+    """
+    ch 3
+
+    This is a simplified self-attention mechanism, use CausalAttention instead.
+    """
+
+    def __init__(self, d_in, d_out, qkv_bias=False):
+        super().__init__()
+        self.d_out = d_out
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+
+    def forward(self, x):
+        keys = self.W_key(x)
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        attn_scores = queries @ keys.T
+        attn_weights = torch.softmax(attn_scores / keys.shape[-1] ** 0.5, dim=-1)
+        context_vec = attn_weights @ values
+        return context_vec
+
+
+class CausalAttention(nn.Module):
+    """
+    ch 3
+
+    This class implements two improvements over SelfAttention:
+
+    - causal self-attention, meaning that inputs past the current token are masked so they
+      don't affect the context vector
+    - random dropout of some attention weights to avoid overfit
+
+    """
+
+    def __init__(self, d_in, d_out, context_length, dropout, qkv_bias=False):
+        super().__init__()
+        self.d_out = d_out
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer(
+            "mask", torch.triu(torch.ones(context_length, context_length), diagonal=1)
+        )
+
+    def forward(self, x):
+        b, num_tokens, d_in = x.shape
+        keys = self.W_key(x)
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        attn_scores = queries @ keys.transpose(1, 2)
+        attn_scores.masked_fill_(self.mask.bool()[:num_tokens, :num_tokens], -torch.inf)
+        attn_weights = torch.softmax(attn_scores / keys.shape[-1] ** 0.5, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        context_vec = attn_weights @ values
+        return context_vec
+
+
+class MultiHeadAttentionWrapper(nn.Module):
+    """
+    ch 3
+
+    Use the equivalent but more computationally efficient MultiHeadAttention class
+    instead.
+    """
+
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+        super().__init__()
+        self.heads = nn.ModuleList(
+            [
+                CausalAttention(d_in, d_out, context_length, dropout, qkv_bias)
+                for _ in range(num_heads)
+            ]
+        )
+
+    def forward(self, x):
+        return torch.cat([head(x) for head in self.heads], dim=-1)
+
+
+class MultiHeadAttention(nn.Module):
+    """
+    ch 3
+
+    Equivalent to MultiHeadAttentionWrapper but more efficient
+    """
+
+    def __init__(self, d_in, d_out, context_length, dropout, num_heads, qkv_bias=False):
+        super().__init__()
+        assert d_out % num_heads == 0, "d_out must be divisible by num_heads"
+
+        self.d_out = d_out
+        self.num_heads = num_heads
+        self.head_dim = d_out // num_heads
+        self.W_query = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_key = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.W_value = nn.Linear(d_in, d_out, bias=qkv_bias)
+        self.out_proj = nn.Linear(d_out, d_out)
+        self.dropout = nn.Dropout(dropout)
+        self.register_buffer(
+            "mask", torch.triu(torch.ones(context_length, context_length), diagonal=1)
+        )
+
+    def forward(self, x):
+        b, num_tokens, d_in = x.shape
+        keys = self.W_key(x)
+        queries = self.W_query(x)
+        values = self.W_value(x)
+
+        keys = keys.view(b, num_tokens, self.num_heads, self.head_dim)
+        queries = queries.view(b, num_tokens, self.num_heads, self.head_dim)
+        values = values.view(b, num_tokens, self.num_heads, self.head_dim)
+
+        keys = keys.transpose(1, 2)
+        queries = queries.transpose(1, 2)
+        values = values.transpose(1, 2)
+
+        attn_scores = queries @ keys.transpose(2, 3)
+        mask_bool = self.mask.bool()[:num_tokens, :num_tokens]
+
+        attn_scores.masked_fill_(mask_bool, -torch.inf)
+
+        attn_weights = torch.softmax(attn_scores / keys.shape[-1] ** 0.5, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        context_vec = (attn_weights @ values).transpose(1, 2)
+
+        context_vec = context_vec.contiguous().view(b, num_tokens, self.d_out)
+        context_vec = self.out_proj(context_vec)
+        return context_vec
 
 
 class BaseTokenizer:
@@ -242,7 +379,155 @@ def example_embedding_bigger():
     """
 
 
+def example_self_attention():
+    # ch 3
+    inputs = torch.tensor(
+        [
+            [0.43, 0.15, 0.89],
+            [0.55, 0.87, 0.66],
+            [0.57, 0.85, 0.64],
+            [0.22, 0.58, 0.33],
+            [0.77, 0.25, 0.10],
+            [0.05, 0.80, 0.55],
+        ]
+    )
+
+    # input embedding to generate context vector for
+    query = inputs[1]
+    attn_scores_2 = torch.empty(inputs.shape[0])
+    for i, x_i in enumerate(inputs):
+        attn_scores_2[i] = torch.dot(x_i, query)
+    print("Attention scores:", attn_scores_2)
+
+    # normalize so they add up to 1
+    attn_weights_2_naive = attn_scores_2 / attn_scores_2.sum()
+    print("Attention weights (naive):  ", attn_weights_2_naive)
+
+    # softmax is a better normalization function
+    attn_weights_2 = torch.softmax(attn_scores_2, dim=0)
+    print("Attention weights (softmax):", attn_weights_2)
+
+    context_vec_2 = torch.zeros(query.shape)
+    for i, x_i in enumerate(inputs):
+        context_vec_2 += attn_weights_2[i] * x_i
+
+    print("Context vector:", context_vec_2)
+
+    # calculate all context vectors at once
+    attn_scores = inputs @ inputs.T
+    # equivalent to:
+    #
+    #   attn_scores = torch.empty(inputs.shape[0], inputs.shape[0])
+    #   for i, x_i in enumerate(inputs):
+    #       for j, x_j in enumerate(inputs):
+    #           attn_scores[i, j] = torch.dot(x_i, x_j)
+    #
+
+    attn_weights = torch.softmax(attn_scores, dim=1)
+    all_context_vecs = attn_weights @ inputs
+    print("All context vectors:", all_context_vecs)
+
+    """
+    Big idea: for each input token, we want the model to be aware of its relationships
+    with the other tokens in the input. To do this we compute a context vector of size M
+    for each input 1..N where context_vec[i][j] represents how much token j is related to
+    token i. M is the # of dimensions of the embedding.
+
+    A simple way to do this is compute a vector of N attention weights, then sum the
+    weighted input tokens to produce the context vector.
+
+    Caveat: in this function we compute attention weights simply using the dot product,
+    but in real life you'll want the attention weights to be trainable.
+    """
+
+
+def example_self_attention2():
+    # ch 3
+    inputs = torch.tensor(
+        [
+            [0.43, 0.15, 0.89],
+            [0.55, 0.87, 0.66],
+            [0.57, 0.85, 0.64],
+            [0.22, 0.58, 0.33],
+            [0.77, 0.25, 0.10],
+            [0.05, 0.80, 0.55],
+        ]
+    )
+
+    x_2 = inputs[1]
+    d_in = inputs.shape[1]
+    d_out = 2
+
+    torch.manual_seed(123)
+    W_query = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+    W_key = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+    W_value = torch.nn.Parameter(torch.rand(d_in, d_out), requires_grad=False)
+
+    query_2 = x_2 @ W_query
+    key_2 = x_2 @ W_key
+    value_2 = x_2 @ W_value
+    print(query_2)
+
+    keys = inputs @ W_key
+    values = inputs @ W_value
+
+    keys_2 = keys[1]
+    attn_score_22 = query_2.dot(keys_2)
+    print("attn_score_22:", attn_score_22)
+
+    attn_scores_2 = query_2 @ keys.T
+
+    d_k = keys.shape[-1]
+    attn_weights_2 = torch.softmax(attn_scores_2 / d_k**0.5, dim=-1)
+    print("attn_weights_2:", attn_weights_2)
+
+    context_vec_2 = attn_weights_2 @ values
+    print("context_vec_2:", context_vec_2)
+
+    """
+    The math here is more complex but the big idea is that we've introduced three new
+    matrices: query (W_q), key (W_k), and value (W_v)
+
+    W_q is combined with the input embedding to produce the query vector, which is
+    combined with the key vector (from W_k) for the attention weights, and then with the
+    value vector (from W_v) for the attention scores.
+
+    W_q, W_k, and W_v can all be tuned during the training process, unlike our simpler
+    algorithm.
+    """
+
+
+def example_multi_head_attention():
+    # ch 3
+
+    torch.manual_seed(123)
+
+    inputs = torch.tensor(
+        [
+            [0.43, 0.15, 0.89],
+            [0.55, 0.87, 0.66],
+            [0.57, 0.85, 0.64],
+            [0.22, 0.58, 0.33],
+            [0.77, 0.25, 0.10],
+            [0.05, 0.80, 0.55],
+        ]
+    )
+
+    batch = torch.stack((inputs, inputs), dim=0)
+
+    batch_size, context_length, d_in = batch.shape
+    d_out = 2
+    multi_head_attention = MultiHeadAttention(
+        d_in, d_out, context_length, 0.0, num_heads=2
+    )
+    context_vecs = multi_head_attention(batch)
+    print(context_vecs)
+
+
 if __name__ == "__main__":
     # example_data_loader()
     # example_embedding()
-    example_embedding_bigger()
+    # example_embedding_bigger()
+    # example_self_attention()
+    # example_self_attention2()
+    example_multi_head_attention()
