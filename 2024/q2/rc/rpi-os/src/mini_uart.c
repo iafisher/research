@@ -1,3 +1,9 @@
+#include <stddef.h>
+
+#include "peripherals/gpio.h"
+#include "peripherals/mini_uart.h"
+#include "utils.h"
+
 void uart_init(void) {
   // Manual: https://github.com/raspberrypi/documentation/files/1888662/BCM2837-ARM-Peripherals.-.Revised.-.V2-1.pdf
 
@@ -39,7 +45,7 @@ void uart_init(void) {
 
   // === Initialize the Mini UART device ===
   // Enable Mini UART.
-  put32(AUX_ENABLE, 1);
+  put32(AUX_ENABLES, 1);
   // Disable receiver/transmitter temporarily while configuring. (p. 16)
   //
   // Also, permanently disable auto flow control as it doesn't work with our TTL-to-serial cable.
