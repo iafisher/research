@@ -30,6 +30,7 @@ Interactive interface:
 
 """
 
+import argparse
 import fnmatch
 import subprocess
 from pathlib import Path
@@ -38,6 +39,31 @@ from typing import Callable, Generator, List, Optional, Union
 
 PathLike = Union[str, Path]
 Filter = Callable[[Path], bool]
+
+
+def main_interactive(d: Optional[str]) -> None:
+    root = path_or_default(d)
+
+    fs = FileSet()
+    while True:
+        # TODO: separate counts for files and directories
+        # TODO: default to ignoring .git + .gitignore?
+        n = sum(1 for _ in fs.resolve(root))
+        print(f"{plural(n, 'file')}")
+
+        try:
+            s = input("> ").strip()
+        except BatchOpSyntaxError as e:
+            print(f"error: {e}")
+            continue
+        except EOFError:
+            print()
+            break
+
+        if not s:
+            continue
+
+        fs = parse_filter(fs, s)
 
 
 class FileSet:
@@ -52,9 +78,22 @@ class FileSet:
             if all(f(p) for f in self.filters):
                 yield p
 
+    def pop(self) -> None:
+        self.filters.pop()
+
+    def clear(self) -> None:
+        self.filters.clear()
+
     def is_folder(self) -> "FileSet":
         def f(p: Path) -> bool:
             return p.is_dir()
+
+        self.filters.append(f)
+        return self
+
+    def is_file(self) -> "FileSet":
+        def f(p: Path) -> bool:
+            return p.is_file()
 
         self.filters.append(f)
         return self
@@ -104,6 +143,29 @@ class FileSet:
     # TODO: is_not_git_ignored()
 
 
+def parse_filter(fs: FileSet, line: str) -> FileSet:
+    # TODO: structural parsing
+    # TODO: handle commands (delete, rename, etc.)
+
+    line = line.strip().lower()
+    if line == "is a file" or line == "is file":
+        return fs.is_file()
+    elif line == "is a folder" or line == "is folder":
+        return fs.is_folder()
+    elif line.startswith("!"):
+        cmd = line[1:]
+        if cmd == "pop":
+            fs.pop()
+            return fs
+        elif cmd == "clear":
+            fs.clear()
+            return fs
+        else:
+            raise BatchOpSyntaxError("unknown command")
+    else:
+        raise BatchOpSyntaxError("could not parse")
+
+
 class BatchOp:
     def __init__(self, root: Optional[PathLike]) -> None:
         self.root = path_or_default(root)
@@ -134,6 +196,17 @@ def path_or_default(p: Optional[PathLike]) -> Path:
     return r.absolute()
 
 
-b = BatchOp()
-for p in b.list(FileSet().is_folder().is_empty()):
-    print(p)
+def plural(n: int, s: str) -> str:
+    return f"{n} {s}" if n == 1 else f"{n} {s}s"
+
+
+class BatchOpSyntaxError(Exception):
+    pass
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--directory")
+    args = parser.parse_args()
+
+    main_interactive(args.directory)
