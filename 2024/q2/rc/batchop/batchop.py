@@ -28,10 +28,19 @@ Interactive interface:
     534 files
     > move to markdown-files
 
+TODO: `rename` command (needs design)
+TODO: human-readable parser (needs design)
+TODO: gitignore support
+TODO: `move` command
+TODO: `replace` command
+TODO: `run` command
+TODO: profiling + optimization
+
 """
 
 import argparse
 import fnmatch
+import functools
 import subprocess
 from pathlib import Path
 from typing import Callable, Generator, List, Optional, Union
@@ -66,6 +75,15 @@ def main_interactive(d: Optional[str]) -> None:
         fs = parse_filter(fs, s)
 
 
+def make_filter(f: Filter):
+    @functools.wraps(f)
+    def inner(self) -> "FileSet":
+        self.filters.append(f)
+        return self
+
+    return inner
+
+
 class FileSet:
     filters: List[Filter]
 
@@ -84,63 +102,42 @@ class FileSet:
     def clear(self) -> None:
         self.filters.clear()
 
-    def is_folder(self) -> "FileSet":
-        def f(p: Path) -> bool:
-            return p.is_dir()
+    @make_filter
+    def is_folder(p: Path) -> bool:
+        return p.is_dir()
 
-        self.filters.append(f)
-        return self
+    @make_filter
+    def is_file(p: Path) -> bool:
+        return p.is_file()
 
-    def is_file(self) -> "FileSet":
-        def f(p: Path) -> bool:
-            return p.is_file()
+    @make_filter
+    def is_empty(p: Path) -> bool:
+        # TODO: ignore files or filter them out?
+        # TODO: more efficient way to check if directory is empty
+        return not p.is_dir() or not list(p.glob("*"))
 
-        self.filters.append(f)
-        return self
+    @make_filter
+    def is_named(p: Path) -> bool:
+        # TODO: case-insensitive file systems?
+        return fnmatch.fnmatch(p.name, pat)
 
-    def is_empty(self) -> "FileSet":
-        def f(p: Path) -> bool:
-            # TODO: ignore files or filter them out?
-            # TODO: more efficient way to check if directory is empty
-            return not p.is_dir() or not list(p.glob("*"))
+    @make_filter
+    def is_not_named(p: Path) -> bool:
+        return not fnmatch.fnmatch(p.name, pat)
 
-        self.filters.append(f)
-        return self
+    @make_filter
+    def is_not_in(p: Path) -> bool:
+        # TODO: messy
+        return not (p.is_dir() and fnmatch.fnmatch(p.name, pat)) and all(
+            not fnmatch.fnmatch(s, pat) for s in p.parts[:-1]
+        )
 
-    def is_named(self, pat: str) -> "FileSet":
-        def f(p: Path) -> bool:
-            # TODO: case-insensitive file systems?
-            return fnmatch.fnmatch(p.name, pat)
+    @make_filter
+    def is_not_hidden(p: Path) -> bool:
+        # TODO: cross-platform?
+        return all(not s.startswith(".") for s in p.parts)
 
-        self.filters.append(f)
-        return self
-
-    def is_not_named(self, pat: str) -> "FileSet":
-        def f(p: Path) -> bool:
-            return not fnmatch.fnmatch(p.name, pat)
-
-        self.filters.append(f)
-        return self
-
-    def is_not_in(self, pat: str) -> "FileSet":
-        def f(p: Path) -> bool:
-            # TODO: messy
-            return not (p.is_dir() and fnmatch.fnmatch(p.name, pat)) and all(
-                not fnmatch.fnmatch(s, pat) for s in p.parts[:-1]
-            )
-
-        self.filters.append(f)
-        return self
-
-    def is_not_hidden(self) -> "FileSet":
-        def f(p: Path) -> bool:
-            # TODO: cross-platform?
-            return all(not s.startswith(".") for s in p.parts)
-
-        self.filters.append(f)
-        return self
-
-    # TODO: is_not_git_ignored()
+    # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
 
 
 def parse_filter(fs: FileSet, line: str) -> FileSet:
@@ -152,6 +149,8 @@ def parse_filter(fs: FileSet, line: str) -> FileSet:
         return fs.is_file()
     elif line == "is a folder" or line == "is folder":
         return fs.is_folder()
+    elif line == "is not hidden":
+        return fs.is_not_hidden()
     elif line.startswith("!"):
         cmd = line[1:]
         if cmd == "pop":
