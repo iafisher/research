@@ -96,3 +96,8 @@ void uart_send_string(const char* str) {
     uart_send(str[i]);
   }
 }
+
+// required by printf
+void putc(void* p, char c) {
+  uart_send(c);
+}
