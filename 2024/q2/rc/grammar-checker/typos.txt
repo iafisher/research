@@ -1,0 +1,11 @@
+One thing I am enthusiastic about tutoring.
+
+  Rephrasing from "I am enthusiastic about tutoring".
+
+A one-on-one session is some of the best ways to help.
+
+  Rephrasing from "One-on-one sessions are some..."
+
+Rust has excellent support for co-routines, which we are being actively developing.
+
+  From the wild: https://irenezhang.net/papers/demikernel-sosp21.pdf
