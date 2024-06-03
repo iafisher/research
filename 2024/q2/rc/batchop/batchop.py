@@ -28,6 +28,7 @@ Interactive interface:
     534 files
     > move to markdown-files
 
+TODO: `--make-sandbox`
 TODO: `rename` command (needs design)
 TODO: human-readable parser (needs design)
 TODO: gitignore support
@@ -42,12 +43,127 @@ import argparse
 import fnmatch
 import functools
 import subprocess
+import sys
+import unittest
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Generator, List, Optional, Union
+from typing import Callable, Generator, Iterator, List, NoReturn, Optional, Union
 
 
 PathLike = Union[str, Path]
 Filter = Callable[[Path], bool]
+
+
+def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
+    parsed_cmd = parse_command(cmdstr)
+
+    bop = BatchOp(root=directory)
+    if parsed_cmd.command == "delete":
+        bop.delete(parsed_cmd.fileset)
+    else:
+        err_unknown_command(parsed_cmd.command)
+
+
+@dataclass
+class ParsedCommand:
+    command: str
+    fileset: "FileSet"
+
+
+def parse_command(cmdstr: str) -> ParsedCommand:
+    # delete non-empty folders
+    # delete folders that are not empty
+    # delete folders that are non-empty
+
+    fs = FileSet()
+
+    tkniter = tokenize(cmdstr)
+    command = next(tkniter)
+
+    if command == "delete":
+        return parse_delete_command(tkniter)
+    else:
+        err_unknown_command(command)
+
+
+Tokenizer = Iterator[str]
+
+
+def parse_delete_command(tkniter: Tokenizer) -> ParsedCommand:
+    # Examples:
+    #   delete non-empty folders
+    #   delete folders that are non-empty and
+    #   delete anything ending with '.o'
+    #
+    # Syntax:
+    #   DELETE np pred*
+
+    fs = FileSet()
+    fs = parse_np(tkniter, fs)
+
+    while True:
+        opt = parse_pred(tkniter, fs)
+        if opt is None:
+            break
+        else:
+            fs = opt
+
+    ensure_end_of_tokens(tkniter)
+    return ParsedCommand(command="delete", fileset=fs)
+
+
+def parse_np(tkniter: Tokenizer, fs: "FileSet") -> "FileSet":
+    tkn = next(tkniter)
+
+    # TODO: parse adjectival modifiers (e.g., 'non-empty')
+    if tkn == "anything" or tkn == "everything":
+        return fs
+    elif tkn == "files":
+        return fs.is_file()
+    elif tkn == "folders":
+        return fs.is_folder()
+    else:
+        err_unknown_word(tkn)
+
+
+def parse_pred(tkniter: Tokenizer, fs: "FileSet") -> Optional["FileSet"]:
+    try:
+        tkn = next(tkniter)
+    except StopIteration:
+        return None
+
+    if tkn == "that":
+        tkn = next(tkniter)
+
+    if tkn == "is":
+        tkn = next(tkniter)
+        if tkn == "a" or tkn == "an":
+            tkn = next(tkniter)
+
+        if tkn == "file":
+            return fs.is_file()
+        elif tkn == "folder":
+            return fs.is_folder()
+        else:
+            err_unknown_word(tkn)
+    else:
+        err_unknown_word(tkn)
+
+
+def tokenize(cmdstr: str) -> Generator[str, None, None]:
+    # TODO: more sophisticated tokenization
+    for word in cmdstr.split():
+        yield word.lower()
+
+
+def ensure_end_of_tokens(tkniter: Tokenizer) -> None:
+    try:
+        next(tkniter)
+    except StopIteration:
+        return
+    else:
+        # TODO: better error message
+        raise BatchOpSyntaxError("trailing input")
 
 
 def main_interactive(d: Optional[str]) -> None:
@@ -160,7 +276,7 @@ def parse_filter(fs: FileSet, line: str) -> FileSet:
             fs.clear()
             return fs
         else:
-            raise BatchOpSyntaxError("unknown command")
+            err_unknown_command(cmd)
     else:
         raise BatchOpSyntaxError("could not parse")
 
@@ -203,9 +319,43 @@ class BatchOpSyntaxError(Exception):
     pass
 
 
+def err_unknown_word(word: str) -> NoReturn:
+    raise BatchOpSyntaxError(f"unknown word: {word!r}")
+
+
+def err_unknown_command(cmd: str) -> NoReturn:
+    raise BatchOpSyntaxError(f"unknown command: {cmd!r}")
+
+
+class TestCommandParsing(unittest.TestCase):
+    def test_delete_command(self):
+        cmd = parse_command("delete everything")
+        self.assertEqual(cmd.command, "delete")
+        self.assertEqual(len(cmd.fileset.filters), 0)
+
+        cmd = parse_command("delete anything that is a file")
+        self.assertEqual(cmd.command, "delete")
+        # TODO: assert on type of filter
+        self.assertEqual(len(cmd.fileset.filters), 1)
+
+        cmd = parse_command("delete folders")
+        self.assertEqual(cmd.command, "delete")
+        # TODO: assert on type of filter
+        self.assertEqual(len(cmd.fileset.filters), 1)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--directory")
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("words", nargs="*")
     args = parser.parse_args()
 
-    main_interactive(args.directory)
+    if args.self_test:
+        unittest.main(argv=[sys.argv[0]])
+    else:
+        if len(args.words) > 0:
+            cmdstr = " ".join(args.words)
+            main_execute(cmdstr, directory=args.directory)
+        else:
+            main_interactive(args.directory)
