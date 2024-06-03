@@ -1,5 +1,6 @@
 #include "peripherals/timer.h"
 #include "printf.h"
+#include "sched.h"
 #include "utils.h"
 
 const unsigned int INTERVAL = 200000;
@@ -23,5 +24,6 @@ void handle_timer_irq() {
   // acknowledge the interrupt
   put32(TIMER_CS, TIMER_CS_M1);
 
-  printf("timer interrupt received\r\n");
+  // call into the scheduler
+  timer_tick();
 }
