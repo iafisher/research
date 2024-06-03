@@ -71,6 +71,9 @@ def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
     elif parsed_cmd.command == "list":
         for p in bop.list(fileset):
             print(p)
+    elif parsed_cmd.command == "count":
+        n = bop.count(fileset)
+        print(n)
     else:
         err_unknown_command(parsed_cmd.command)
 
@@ -82,20 +85,13 @@ class ParsedCommand:
 
 
 def parse_command(cmdstr: str) -> ParsedCommand:
-    # delete non-empty folders
-    # delete folders that are not empty
-    # delete folders that are non-empty
-
     tokens = tokenize(cmdstr)
     if len(tokens) == 0:
         err_empty_input()
 
     command = tokens.pop(0).lower()
 
-    if command == "delete":
-        filters = parse_np_and_preds(tokens)
-        return ParsedCommand(command=command, filters=filters)
-    elif command == "list":
+    if command in ("count", "delete", "list"):
         filters = parse_np_and_preds(tokens)
         return ParsedCommand(command=command, filters=filters)
     else:
@@ -517,12 +513,29 @@ class FilterSizeLessEqual(Filter):
         return p.stat().st_size <= (self.base * self.multiple)
 
 
+@dataclass
+class FilterHasExtension(Filter):
+    ext: str
+
+    def __init__(self, ext: str) -> None:
+        if ext.startswith("."):
+            self.ext = ext
+        else:
+            self.ext = "." + ext
+
+    def test(self, p: Path) -> bool:
+        return p.suffix == self.ext
+
+
 class BatchOp:
     def __init__(self, root: Optional[PathLike]) -> None:
         self.root = path_or_default(root)
 
     def list(self, fileset: FileSet) -> Generator[Path, None, None]:
         yield from list(fileset.resolve(self.root))
+
+    def count(self, fileset: FileSet) -> int:
+        return sum(1 for _ in fileset.resolve(self.root))
 
     def delete(self, fileset: FileSet) -> None:
         # TODO: don't remove files that are in a directory that will be removed
@@ -578,18 +591,33 @@ def err_empty_input() -> NoReturn:
 PATTERNS = [
     # 'that is a file'
     (
-        [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("file")],
+        [
+            POpt(PLit("that")),
+            PAnyLit(["is", "are"]),
+            PNot(),
+            POpt(PLit("a")),
+            PLit("file"),
+        ],
         FilterIsFile,
     ),
     # 'that is a folder'
     (
-        [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("folder")],
+        [
+            POpt(PLit("that")),
+            PAnyLit(["is", "are"]),
+            PNot(),
+            POpt(PLit("a")),
+            PLit("folder"),
+        ],
         FilterIsFolder,
     ),
     # 'that is named X'
-    ([POpt(PLit("is")), PNot(), PLit("named"), PString()], FilterIsNamed),
+    ([POpt(PAnyLit(["is", "are"])), PNot(), PLit("named"), PString()], FilterIsNamed),
     # 'that is empty'
-    ([POpt(PLit("that")), PLit("is"), PNot(), PLit("empty")], FilterIsEmpty),
+    (
+        [POpt(PLit("that")), PAnyLit(["is", "are"]), PNot(), PLit("empty")],
+        FilterIsEmpty,
+    ),
     # '> X bytes'
     ([PAnyLit([">", "gt"]), PDecimal(), PSizeUnit()], FilterSizeGreater),
     # '>= X bytes'
@@ -599,9 +627,31 @@ PATTERNS = [
     # '<= X bytes'
     ([PAnyLit(["<=", "lte", "le"]), PDecimal(), PSizeUnit()], FilterSizeLessEqual),
     # 'that is in X'
-    ([POpt(PLit("that")), POpt(PLit("is")), PNot(), PLit("in"), PString()], FilterIsIn),
+    (
+        [
+            POpt(PLit("that")),
+            POpt(PAnyLit(["is", "are"])),
+            PNot(),
+            PLit("in"),
+            PString(),
+        ],
+        FilterIsIn,
+    ),
     # 'that is hidden'
-    ([POpt(PLit("that")), POpt(PLit("is")), PNot(), PLit("hidden")], FilterIsHidden),
+    (
+        [POpt(PLit("that")), POpt(PAnyLit(["is", "are"])), PNot(), PLit("hidden")],
+        FilterIsHidden,
+    ),
+    # 'that has extension X'
+    (
+        [
+            POpt(PLit("that")),
+            PAnyLit(["has", "have"]),
+            PAnyLit(["ext", "extension"]),
+            PString(),
+        ],
+        FilterHasExtension,
+    ),
 ]
 
 
