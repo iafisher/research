@@ -1,9 +1,10 @@
 #include "printf.h"
 #include "mini_uart.h"
+#include "utils.h"
 
 void kernel_main(void) {
   uart_init();
-  init_print(0, putc);
+  init_printf(0, putc);
   uart_send_string("Hello, world!\n");
 
   int el = get_el();
