@@ -9,3 +9,7 @@ A one-on-one session is some of the best ways to help.
 Rust has excellent support for co-routines, which we are being actively developing.
 
   From the wild: https://irenezhang.net/papers/demikernel-sosp21.pdf
+
+I meet into someone I knew.
+
+  Confused with "run into"
