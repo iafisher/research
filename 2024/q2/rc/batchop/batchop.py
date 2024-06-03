@@ -39,9 +39,10 @@ TODO: profiling + optimization
 
 """
 
+import abc
 import argparse
+import dataclasses
 import fnmatch
-import functools
 import subprocess
 import sys
 import unittest
@@ -51,7 +52,12 @@ from typing import Callable, Generator, Iterator, List, NoReturn, Optional, Unio
 
 
 PathLike = Union[str, Path]
-Filter = Callable[[Path], bool]
+
+
+class Filter(abc.ABC):
+    @abc.abstractmethod
+    def test(self, p: Path) -> bool:
+        pass
 
 
 def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
@@ -59,7 +65,8 @@ def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
 
     bop = BatchOp(root=directory)
     if parsed_cmd.command == "delete":
-        bop.delete(parsed_cmd.fileset)
+        fileset = FileSet(parsed_cmd.filters)
+        bop.delete(fileset)
     else:
         err_unknown_command(parsed_cmd.command)
 
@@ -67,15 +74,13 @@ def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
 @dataclass
 class ParsedCommand:
     command: str
-    fileset: "FileSet"
+    filters: List[Filter]
 
 
 def parse_command(cmdstr: str) -> ParsedCommand:
     # delete non-empty folders
     # delete folders that are not empty
     # delete folders that are non-empty
-
-    fs = FileSet()
 
     tkniter = tokenize(cmdstr)
     command = next(tkniter)
@@ -98,39 +103,38 @@ def parse_delete_command(tkniter: Tokenizer) -> ParsedCommand:
     # Syntax:
     #   DELETE np pred*
 
-    fs = FileSet()
-    fs = parse_np(tkniter, fs)
+    filters = parse_np(tkniter)
 
     while True:
-        opt = parse_pred(tkniter, fs)
-        if opt is None:
+        more_filters = parse_pred(tkniter)
+        if len(more_filters) == 0:
             break
         else:
-            fs = opt
+            filters.extend(more_filters)
 
     ensure_end_of_tokens(tkniter)
-    return ParsedCommand(command="delete", fileset=fs)
+    return ParsedCommand(command="delete", filters=filters)
 
 
-def parse_np(tkniter: Tokenizer, fs: "FileSet") -> "FileSet":
+def parse_np(tkniter: Tokenizer) -> List[Filter]:
     tkn = next(tkniter)
 
     # TODO: parse adjectival modifiers (e.g., 'non-empty')
     if tkn == "anything" or tkn == "everything":
-        return fs
+        return []
     elif tkn == "files":
-        return fs.is_file()
+        return [FilterIsFile()]
     elif tkn == "folders":
-        return fs.is_folder()
+        return [FilterIsFolder()]
     else:
         err_unknown_word(tkn)
 
 
-def parse_pred(tkniter: Tokenizer, fs: "FileSet") -> Optional["FileSet"]:
+def parse_pred(tkniter: Tokenizer) -> List[Filter]:
     try:
         tkn = next(tkniter)
     except StopIteration:
-        return None
+        return []
 
     if tkn == "that":
         tkn = next(tkniter)
@@ -141,9 +145,9 @@ def parse_pred(tkniter: Tokenizer, fs: "FileSet") -> Optional["FileSet"]:
             tkn = next(tkniter)
 
         if tkn == "file":
-            return fs.is_file()
+            return [FilterIsFile()]
         elif tkn == "folder":
-            return fs.is_folder()
+            return [FilterIsFolder()]
         else:
             err_unknown_word(tkn)
     else:
@@ -191,20 +195,9 @@ def main_interactive(d: Optional[str]) -> None:
         fs = parse_filter(fs, s)
 
 
-def make_filter(f: Filter):
-    @functools.wraps(f)
-    def inner(self) -> "FileSet":
-        self.filters.append(f)
-        return self
-
-    return inner
-
-
+@dataclass
 class FileSet:
-    filters: List[Filter]
-
-    def __init__(self) -> None:
-        self.filters = []
+    filters: List[Filter] = dataclasses.field(default_factory=list)
 
     def resolve(self, root: Path) -> Generator[Path, None, None]:
         ps = root.glob("**/*")
@@ -218,42 +211,90 @@ class FileSet:
     def clear(self) -> None:
         self.filters.clear()
 
-    @make_filter
-    def is_folder(p: Path) -> bool:
+    def is_folder(self) -> "FileSet":
+        self.filters.append(FilterIsFolder())
+        return self
+
+    def is_file(self) -> "FileSet":
+        self.filters.append(FilterIsFile())
+        return self
+
+    def is_empty(self) -> "FileSet":
+        self.filters.append(FilterIsEmpty())
+        return self
+
+    def is_named(self, pattern: str) -> "FileSet":
+        self.filters.append(FilterIsNamed(pattern))
+        return self
+
+    def is_not_named(self, pattern: str) -> "FileSet":
+        self.filters.append(FilterIsNotNamed(pattern))
+        return self
+
+    def is_not_in(self, pattern: str) -> "FileSet":
+        self.filters.append(FilterIsNotIn(pattern))
+        return self
+
+    def is_not_hidden(self) -> "FileSet":
+        self.filters.append(FilterIsNotHidden())
+        return self
+
+    # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
+
+
+@dataclass
+class FilterIsFolder:
+    def test(self, p: Path) -> bool:
         return p.is_dir()
 
-    @make_filter
-    def is_file(p: Path) -> bool:
+
+@dataclass
+class FilterIsFile:
+    def test(self, p: Path) -> bool:
         return p.is_file()
 
-    @make_filter
-    def is_empty(p: Path) -> bool:
+
+@dataclass
+class FilterIsEmpty:
+    def test(self, p: Path) -> bool:
         # TODO: ignore files or filter them out?
         # TODO: more efficient way to check if directory is empty
         return not p.is_dir() or not list(p.glob("*"))
 
-    @make_filter
-    def is_named(p: Path) -> bool:
-        # TODO: case-insensitive file systems?
-        return fnmatch.fnmatch(p.name, pat)
 
-    @make_filter
-    def is_not_named(p: Path) -> bool:
+@dataclass
+class FilterIsNamed:
+    pattern: str
+
+    def test(self, p: Path) -> bool:
+        # TODO: case-insensitive file systems?
+        return fnmatch.fnmatch(p.name, self.pattern)
+
+
+@dataclass
+class FilterIsNotNamed:
+    pattern: str
+
+    def test(self, p: Path) -> bool:
         return not fnmatch.fnmatch(p.name, pat)
 
-    @make_filter
-    def is_not_in(p: Path) -> bool:
+
+@dataclass
+class FilterIsNotIn:
+    pattern: str
+
+    def test(self, p: Path) -> bool:
         # TODO: messy
-        return not (p.is_dir() and fnmatch.fnmatch(p.name, pat)) and all(
-            not fnmatch.fnmatch(s, pat) for s in p.parts[:-1]
+        return not (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) and all(
+            not fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
         )
 
-    @make_filter
-    def is_not_hidden(p: Path) -> bool:
+
+@dataclass
+class FilterIsNotHidden:
+    def test(self, p: Path) -> bool:
         # TODO: cross-platform?
         return all(not s.startswith(".") for s in p.parts)
-
-    # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
 
 
 def parse_filter(fs: FileSet, line: str) -> FileSet:
@@ -331,17 +372,15 @@ class TestCommandParsing(unittest.TestCase):
     def test_delete_command(self):
         cmd = parse_command("delete everything")
         self.assertEqual(cmd.command, "delete")
-        self.assertEqual(len(cmd.fileset.filters), 0)
+        self.assertEqual(cmd.filters, [])
 
         cmd = parse_command("delete anything that is a file")
         self.assertEqual(cmd.command, "delete")
-        # TODO: assert on type of filter
-        self.assertEqual(len(cmd.fileset.filters), 1)
+        self.assertEqual(cmd.filters, [FilterIsFile()])
 
         cmd = parse_command("delete folders")
         self.assertEqual(cmd.command, "delete")
-        # TODO: assert on type of filter
-        self.assertEqual(len(cmd.fileset.filters), 1)
+        self.assertEqual(cmd.filters, [FilterIsFolder()])
 
 
 if __name__ == "__main__":
