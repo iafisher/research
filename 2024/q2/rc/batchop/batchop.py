@@ -64,9 +64,12 @@ def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
     parsed_cmd = parse_command(cmdstr)
 
     bop = BatchOp(root=directory)
+    fileset = FileSet(parsed_cmd.filters)
     if parsed_cmd.command == "delete":
-        fileset = FileSet(parsed_cmd.filters)
         bop.delete(fileset)
+    elif parsed_cmd.command == "list":
+        for p in bop.list(fileset):
+            print(p)
     else:
         err_unknown_command(parsed_cmd.command)
 
@@ -86,7 +89,11 @@ def parse_command(cmdstr: str) -> ParsedCommand:
     command = next(tkniter)
 
     if command == "delete":
-        return parse_delete_command(tkniter)
+        filters = parse_np_and_preds(tkniter)
+        return ParsedCommand(command=command, filters=filters)
+    elif command == "list":
+        filters = parse_np_and_preds(tkniter)
+        return ParsedCommand(command=command, filters=filters)
     else:
         err_unknown_command(command)
 
@@ -94,15 +101,7 @@ def parse_command(cmdstr: str) -> ParsedCommand:
 Tokenizer = Iterator[str]
 
 
-def parse_delete_command(tkniter: Tokenizer) -> ParsedCommand:
-    # Examples:
-    #   delete non-empty folders
-    #   delete folders that are non-empty and
-    #   delete anything ending with '.o'
-    #
-    # Syntax:
-    #   DELETE np pred*
-
+def parse_np_and_preds(tkniter: Tokenizer) -> List[Filter]:
     filters = parse_np(tkniter)
 
     while True:
@@ -113,7 +112,7 @@ def parse_delete_command(tkniter: Tokenizer) -> ParsedCommand:
             filters.extend(more_filters)
 
     ensure_end_of_tokens(tkniter)
-    return ParsedCommand(command="delete", filters=filters)
+    return filters
 
 
 def parse_np(tkniter: Tokenizer) -> List[Filter]:
@@ -139,17 +138,30 @@ def parse_pred(tkniter: Tokenizer) -> List[Filter]:
     if tkn == "that":
         tkn = next(tkniter)
 
-    if tkn == "is":
+    if tkn == "is" or tkn == "are":
         tkn = next(tkniter)
         if tkn == "a" or tkn == "an":
             tkn = next(tkniter)
 
+        if tkn == "not":
+            negated = True
+            tkn = next(tkniter)
+        else:
+            negated = False
+
         if tkn == "file":
-            return [FilterIsFile()]
+            f = FilterIsFile()
         elif tkn == "folder":
-            return [FilterIsFolder()]
+            f = FilterIsFolder()
+        elif tkn == "empty":
+            f = FilterIsEmpty()
         else:
             err_unknown_word(tkn)
+
+        if negated:
+            return [FilterNegated(f)]
+        else:
+            return [f]
     else:
         err_unknown_word(tkn)
 
@@ -202,7 +214,7 @@ class FileSet:
     def resolve(self, root: Path) -> Generator[Path, None, None]:
         ps = root.glob("**/*")
         for p in ps:
-            if all(f(p) for f in self.filters):
+            if all(f.test(p) for f in self.filters):
                 yield p
 
     def pop(self) -> None:
@@ -228,7 +240,7 @@ class FileSet:
         return self
 
     def is_not_named(self, pattern: str) -> "FileSet":
-        self.filters.append(FilterIsNotNamed(pattern))
+        self.filters.append(FilterNegated(FilterIsNamed(pattern)))
         return self
 
     def is_not_in(self, pattern: str) -> "FileSet":
@@ -240,6 +252,14 @@ class FileSet:
         return self
 
     # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
+
+
+@dataclass
+class FilterNegated:
+    inner: Filter
+
+    def test(self, p: Path) -> bool:
+        return not self.inner.test(p)
 
 
 @dataclass
@@ -272,14 +292,6 @@ class FilterIsNamed:
 
 
 @dataclass
-class FilterIsNotNamed:
-    pattern: str
-
-    def test(self, p: Path) -> bool:
-        return not fnmatch.fnmatch(p.name, pat)
-
-
-@dataclass
 class FilterIsNotIn:
     pattern: str
 
@@ -300,6 +312,7 @@ class FilterIsNotHidden:
 def parse_filter(fs: FileSet, line: str) -> FileSet:
     # TODO: structural parsing
     # TODO: handle commands (delete, rename, etc.)
+    # TODO: unify with parse_command
 
     line = line.strip().lower()
     if line == "is a file" or line == "is file":
@@ -349,7 +362,7 @@ def path_or_default(p: Optional[PathLike]) -> Path:
     else:
         r = Path(p)
 
-    return r.absolute()
+    return r
 
 
 def plural(n: int, s: str) -> str:
