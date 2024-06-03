@@ -86,14 +86,17 @@ def parse_command(cmdstr: str) -> ParsedCommand:
     # delete folders that are not empty
     # delete folders that are non-empty
 
-    tkniter = tokenize(cmdstr)
-    command = next(tkniter)
+    tokens = tokenize(cmdstr)
+    if len(tokens) == 0:
+        err_empty_input()
+
+    command = tokens.pop(0).lower()
 
     if command == "delete":
-        filters = parse_np_and_preds(tkniter)
+        filters = parse_np_and_preds(tokens)
         return ParsedCommand(command=command, filters=filters)
     elif command == "list":
-        filters = parse_np_and_preds(tkniter)
+        filters = parse_np_and_preds(tokens)
         return ParsedCommand(command=command, filters=filters)
     else:
         err_unknown_command(command)
@@ -102,22 +105,38 @@ def parse_command(cmdstr: str) -> ParsedCommand:
 Tokenizer = Iterator[str]
 
 
-def parse_np_and_preds(tkniter: Tokenizer) -> List[Filter]:
-    filters = parse_np(tkniter)
+def parse_np_and_preds(tokens: List[str]) -> List[Filter]:
+    filters = parse_np(tokens)
 
-    while True:
-        more_filters = parse_pred(tkniter)
-        if len(more_filters) == 0:
-            break
-        else:
-            filters.extend(more_filters)
+    i = 0
+    while i < len(tokens):
+        matched_one = False
+        for pattern, filter_constructor in PATTERNS:
+            m = try_phrase_match(pattern, tokens[i:])
+            if m is not None:
+                i += m.tokens_consumed
+                if filter_constructor is not None:
+                    f = filter_constructor(*m.captures)
+                    if m.negated:
+                        f = FilterNegated(f)
 
-    ensure_end_of_tokens(tkniter)
+                    filters.append(f)
+
+                matched_one = True
+                break
+
+        if not matched_one:
+            # TODO: more helpful message
+            raise BatchOpSyntaxError("could not parse")
+
     return filters
 
 
-def parse_np(tkniter: Tokenizer) -> List[Filter]:
-    tkn = next(tkniter)
+def parse_np(tokens: List[str]) -> List[Filter]:
+    if len(tokens) == 0:
+        err_empty_input()
+
+    tkn = tokens.pop(0)
 
     # TODO: parse adjectival modifiers (e.g., 'non-empty')
     if tkn == "anything" or tkn == "everything":
@@ -236,6 +255,7 @@ class PSizeUnit(BasePattern):
 class PhraseMatch:
     captures: List[Any]
     negated: bool
+    tokens_consumed: int
 
 
 def try_phrase_match(
@@ -243,18 +263,19 @@ def try_phrase_match(
 ) -> Optional[PhraseMatch]:
     captures = []
     negated = False
+    i = 0
 
     for pattern in patterns:
-        if len(tokens) == 0:
+        if i >= len(tokens):
             # in case patterns ends with optional patterns
             token = ""
         else:
-            token = tokens[0]
+            token = tokens[i]
 
         m = pattern.test(token)
         if m is not None:
             if m.consumed:
-                tokens.pop(0)
+                i += 1
 
             if m.captured is not None:
                 captures.append(m.captured)
@@ -269,28 +290,28 @@ def try_phrase_match(
         else:
             return None
 
-    return PhraseMatch(captures=captures, negated=negated)
+    return PhraseMatch(captures=captures, negated=negated, tokens_consumed=i)
 
 
-PATTERNS = [
-    # that? is a? NOT file
-    # that? is a? NOT folder
-    # > INT SIZE
-    # >= INT SIZE
-    # < INT SIZE
-    # <= INT SIZE
-    # that? is NOT empty
-    # that? is? NOT named PAT
-    # that? is NOT in PAT
-    # that? is NOT hidden
-    # with ext|extension STR
-    [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("file")],
-    [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("folder")],
-    [PLit(">"), PDecimal(), PSizeUnit()],
-    [PLit(">="), PDecimal(), PSizeUnit()],
-    [PLit("<"), PDecimal(), PSizeUnit()],
-    [PLit("<="), PDecimal(), PSizeUnit()],
-]
+# PATTERNS = [
+#     # that? is a? NOT file
+#     # that? is a? NOT folder
+#     # > INT SIZE
+#     # >= INT SIZE
+#     # < INT SIZE
+#     # <= INT SIZE
+#     # that? is NOT empty
+#     # that? is? NOT named PAT
+#     # that? is NOT in PAT
+#     # that? is NOT hidden
+#     # with ext|extension STR
+#     [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("file")],
+#     [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("folder")],
+#     [PLit(">"), PDecimal(), PSizeUnit()],
+#     [PLit(">="), PDecimal(), PSizeUnit()],
+#     [PLit("<"), PDecimal(), PSizeUnit()],
+#     [PLit("<="), PDecimal(), PSizeUnit()],
+# ]
 
 
 def parse_pred(tkniter: Tokenizer) -> List[Filter]:
@@ -331,10 +352,9 @@ def parse_pred(tkniter: Tokenizer) -> List[Filter]:
         err_unknown_word(tkn)
 
 
-def tokenize(cmdstr: str) -> Generator[str, None, None]:
+def tokenize(cmdstr: str) -> List[str]:
     # TODO: more sophisticated tokenization
-    for word in cmdstr.split():
-        yield word.lower()
+    return cmdstr.split()
 
 
 def ensure_end_of_tokens(tkniter: Tokenizer) -> None:
@@ -552,6 +572,22 @@ def err_unknown_word(word: str) -> NoReturn:
 
 def err_unknown_command(cmd: str) -> NoReturn:
     raise BatchOpSyntaxError(f"unknown command: {cmd!r}")
+
+
+def err_empty_input() -> NoReturn:
+    raise BatchOpSyntaxError("empty input")
+
+
+PATTERNS = [
+    (
+        [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("file")],
+        FilterIsFile,
+    ),
+    (
+        [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("folder")],
+        FilterIsFolder,
+    ),
+]
 
 
 class TestCommandParsing(unittest.TestCase):
