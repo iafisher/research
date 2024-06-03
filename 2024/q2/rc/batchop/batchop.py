@@ -42,13 +42,14 @@ TODO: profiling + optimization
 import abc
 import argparse
 import dataclasses
+import decimal
 import fnmatch
 import subprocess
 import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Generator, Iterator, List, NoReturn, Optional, Union
+from typing import Any, Callable, Generator, Iterator, List, NoReturn, Optional, Union
 
 
 PathLike = Union[str, Path]
@@ -129,6 +130,169 @@ def parse_np(tkniter: Tokenizer) -> List[Filter]:
         err_unknown_word(tkn)
 
 
+@dataclass
+class WordMatch:
+    captured: Optional[Any]
+    consumed: bool = True
+    negated: bool = False
+
+
+class BasePattern(abc.ABC):
+    @abc.abstractmethod
+    def test(self, token: str) -> Optional[WordMatch]:
+        pass
+
+
+@dataclass
+class POpt(BasePattern):
+    pattern: BasePattern
+
+    def test(self, token: str) -> Optional[WordMatch]:
+        m = self.pattern.test(token)
+        if m is not None:
+            return m
+        else:
+            return WordMatch(captured=None, consumed=False)
+
+
+@dataclass
+class PLit(BasePattern):
+    literal: str
+    case_sensitive: bool = False
+    captures: bool = False
+
+    def test(self, token: str) -> Optional[WordMatch]:
+        if self.case_sensitive:
+            matches = token == self.literal
+        else:
+            matches = token.lower() == self.literal.lower()
+
+        if matches:
+            captured = token if self.captures else None
+            return WordMatch(captured=captured)
+        else:
+            return None
+
+
+@dataclass
+class PNot(BasePattern):
+    def test(self, token: str) -> Optional[WordMatch]:
+        if token.lower() == "not":
+            return WordMatch(captured=None, negated=True)
+        else:
+            return WordMatch(captured=None, consumed=False)
+
+
+@dataclass
+class PDecimal(BasePattern):
+    def test(self, token: str) -> Optional[WordMatch]:
+        try:
+            captured = decimal.Decimal(token)
+        except decimal.InvalidOperation:
+            return None
+        else:
+            return WordMatch(captured=captured)
+
+
+@dataclass
+class PInt(BasePattern):
+    def test(self, token: str) -> Optional[WordMatch]:
+        try:
+            captured = int(token, base=0)
+        except ValueError:
+            return None
+        else:
+            return WordMatch(captured=captured)
+
+
+@dataclass
+class PString(BasePattern):
+    def test(self, token: str) -> Optional[WordMatch]:
+        if token != "":
+            return WordMatch(captured=token)
+        else:
+            return None
+
+
+@dataclass
+class PSizeUnit(BasePattern):
+    def test(self, token: str) -> Optional[WordMatch]:
+        token_lower = token.lower()
+        if token_lower in ("b", "byte", "bytes"):
+            captured = 1
+        elif token_lower in ("kb", "kilobyte", "kilobytes"):
+            captured = 1_000
+        elif token_lower in ("mb", "megabyte", "megabytes"):
+            captured = 1_000_000
+        elif token_lower in ("gb", "gigabyte", "gigabytes"):
+            captured = 1_000_000_000
+        else:
+            return None
+
+        return WordMatch(captured=captured)
+
+
+@dataclass
+class PhraseMatch:
+    captures: List[Any]
+    negated: bool
+
+
+def try_phrase_match(
+    patterns: List[BasePattern], tokens: List[str]
+) -> Optional[PhraseMatch]:
+    captures = []
+    negated = False
+
+    for pattern in patterns:
+        if len(tokens) == 0:
+            # in case patterns ends with optional patterns
+            token = ""
+        else:
+            token = tokens[0]
+
+        m = pattern.test(token)
+        if m is not None:
+            if m.consumed:
+                tokens.pop(0)
+
+            if m.captured is not None:
+                captures.append(m.captured)
+
+            if m.negated:
+                if negated:
+                    raise BatchOpImpossibleError(
+                        "multiple negations in the same pattern"
+                    )
+
+                negated = True
+        else:
+            return None
+
+    return PhraseMatch(captures=captures, negated=negated)
+
+
+PATTERNS = [
+    # that? is a? NOT file
+    # that? is a? NOT folder
+    # > INT SIZE
+    # >= INT SIZE
+    # < INT SIZE
+    # <= INT SIZE
+    # that? is NOT empty
+    # that? is? NOT named PAT
+    # that? is NOT in PAT
+    # that? is NOT hidden
+    # with ext|extension STR
+    [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("file")],
+    [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("folder")],
+    [PLit(">"), PDecimal(), PSizeUnit()],
+    [PLit(">="), PDecimal(), PSizeUnit()],
+    [PLit("<"), PDecimal(), PSizeUnit()],
+    [PLit("<="), PDecimal(), PSizeUnit()],
+]
+
+
 def parse_pred(tkniter: Tokenizer) -> List[Filter]:
     try:
         tkn = next(tkniter)
@@ -149,6 +313,7 @@ def parse_pred(tkniter: Tokenizer) -> List[Filter]:
         else:
             negated = False
 
+        f: Filter
         if tkn == "file":
             f = FilterIsFile()
         elif tkn == "folder":
@@ -255,7 +420,7 @@ class FileSet:
 
 
 @dataclass
-class FilterNegated:
+class FilterNegated(Filter):
     inner: Filter
 
     def test(self, p: Path) -> bool:
@@ -263,19 +428,19 @@ class FilterNegated:
 
 
 @dataclass
-class FilterIsFolder:
+class FilterIsFolder(Filter):
     def test(self, p: Path) -> bool:
         return p.is_dir()
 
 
 @dataclass
-class FilterIsFile:
+class FilterIsFile(Filter):
     def test(self, p: Path) -> bool:
         return p.is_file()
 
 
 @dataclass
-class FilterIsEmpty:
+class FilterIsEmpty(Filter):
     def test(self, p: Path) -> bool:
         # TODO: ignore files or filter them out?
         # TODO: more efficient way to check if directory is empty
@@ -283,7 +448,7 @@ class FilterIsEmpty:
 
 
 @dataclass
-class FilterIsNamed:
+class FilterIsNamed(Filter):
     pattern: str
 
     def test(self, p: Path) -> bool:
@@ -292,7 +457,7 @@ class FilterIsNamed:
 
 
 @dataclass
-class FilterIsNotIn:
+class FilterIsNotIn(Filter):
     pattern: str
 
     def test(self, p: Path) -> bool:
@@ -303,7 +468,7 @@ class FilterIsNotIn:
 
 
 @dataclass
-class FilterIsNotHidden:
+class FilterIsNotHidden(Filter):
     def test(self, p: Path) -> bool:
         # TODO: cross-platform?
         return all(not s.startswith(".") for s in p.parts)
@@ -369,7 +534,15 @@ def plural(n: int, s: str) -> str:
     return f"{n} {s}" if n == 1 else f"{n} {s}s"
 
 
-class BatchOpSyntaxError(Exception):
+class BatchOpError(Exception):
+    pass
+
+
+class BatchOpSyntaxError(BatchOpError):
+    pass
+
+
+class BatchOpImpossibleError(BatchOpError):
     pass
 
 
@@ -394,6 +567,51 @@ class TestCommandParsing(unittest.TestCase):
         cmd = parse_command("delete folders")
         self.assertEqual(cmd.command, "delete")
         self.assertEqual(cmd.filters, [FilterIsFolder()])
+
+
+class TestPatternMatching(unittest.TestCase):
+    def test_match_literal(self):
+        pattern = [PLit("is")]
+        m = try_phrase_match(pattern, ["is"])
+        self.assert_match(m)
+
+        m = try_phrase_match(pattern, ["are"])
+        self.assert_no_match(m)
+
+    def test_match_optional(self):
+        pattern = [POpt(PLit("an"))]
+        m = try_phrase_match(pattern, ["folder"])
+        self.assert_match(m)
+
+        m = try_phrase_match(pattern, ["an"])
+        self.assert_match(m)
+
+        m = try_phrase_match(pattern, [])
+        self.assert_match(m)
+
+    def test_match_complex(self):
+        pattern = [POpt(PLit("is")), PNot(), PDecimal(), PSizeUnit()]
+        m = try_phrase_match(pattern, ["is", "10.7", "gigabytes"])
+        self.assert_match(m, [decimal.Decimal("10.7"), 1_000_000_000])
+
+        m = try_phrase_match(pattern, ["10.7", "gigabytes"])
+        self.assert_match(m, [decimal.Decimal("10.7"), 1_000_000_000])
+
+        m = try_phrase_match(pattern, ["is", "not", "2.1", "mb"])
+        self.assert_match(m, [decimal.Decimal("2.1"), 1_000_000], negated=True)
+
+        m = try_phrase_match(pattern, ["not", "2.1", "mb"])
+        self.assert_match(m, [decimal.Decimal("2.1"), 1_000_000], negated=True)
+
+    def assert_match(
+        self, m: PhraseMatch, captures: List[Any] = [], negated: bool = False
+    ) -> None:
+        self.assertIsNotNone(m)
+        self.assertEqual(m.captures, captures)
+        self.assertEqual(m.negated, negated)
+
+    def assert_no_match(self, m: Optional[PhraseMatch]) -> None:
+        self.assertIsNone(m)
 
 
 if __name__ == "__main__":
