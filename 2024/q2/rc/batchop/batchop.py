@@ -102,9 +102,6 @@ def parse_command(cmdstr: str) -> ParsedCommand:
         err_unknown_command(command)
 
 
-Tokenizer = Iterator[str]
-
-
 def parse_np_and_preds(tokens: List[str]) -> List[Filter]:
     filters = parse_np(tokens)
 
@@ -127,7 +124,7 @@ def parse_np_and_preds(tokens: List[str]) -> List[Filter]:
 
         if not matched_one:
             # TODO: more helpful message
-            raise BatchOpSyntaxError("could not parse")
+            raise BatchOpSyntaxError(f"could not parse starting at {tokens[i]!r}")
 
     return filters
 
@@ -146,7 +143,8 @@ def parse_np(tokens: List[str]) -> List[Filter]:
     elif tkn == "folders":
         return [FilterIsFolder()]
     else:
-        err_unknown_word(tkn)
+        tokens.insert(0, tkn)
+        return []
 
 
 @dataclass
@@ -185,6 +183,30 @@ class PLit(BasePattern):
             matches = token == self.literal
         else:
             matches = token.lower() == self.literal.lower()
+
+        if matches:
+            captured = token if self.captures else None
+            return WordMatch(captured=captured)
+        else:
+            return None
+
+
+@dataclass
+class PAnyLit(BasePattern):
+    literals: List[str]
+    case_sensitive: bool = False
+    captures: bool = False
+
+    def test(self, token: str) -> Optional[WordMatch]:
+        matches = False
+        for literal in self.literals:
+            if self.case_sensitive:
+                matches = token == literal
+            else:
+                matches = token.lower() == literal.lower()
+
+            if matches:
+                break
 
         if matches:
             captured = token if self.captures else None
@@ -293,78 +315,9 @@ def try_phrase_match(
     return PhraseMatch(captures=captures, negated=negated, tokens_consumed=i)
 
 
-# PATTERNS = [
-#     # that? is a? NOT file
-#     # that? is a? NOT folder
-#     # > INT SIZE
-#     # >= INT SIZE
-#     # < INT SIZE
-#     # <= INT SIZE
-#     # that? is NOT empty
-#     # that? is? NOT named PAT
-#     # that? is NOT in PAT
-#     # that? is NOT hidden
-#     # with ext|extension STR
-#     [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("file")],
-#     [POpt(PLit("that")), PLit("is"), POpt(PLit("a")), PLit("folder")],
-#     [PLit(">"), PDecimal(), PSizeUnit()],
-#     [PLit(">="), PDecimal(), PSizeUnit()],
-#     [PLit("<"), PDecimal(), PSizeUnit()],
-#     [PLit("<="), PDecimal(), PSizeUnit()],
-# ]
-
-
-def parse_pred(tkniter: Tokenizer) -> List[Filter]:
-    try:
-        tkn = next(tkniter)
-    except StopIteration:
-        return []
-
-    if tkn == "that":
-        tkn = next(tkniter)
-
-    if tkn == "is" or tkn == "are":
-        tkn = next(tkniter)
-        if tkn == "a" or tkn == "an":
-            tkn = next(tkniter)
-
-        if tkn == "not":
-            negated = True
-            tkn = next(tkniter)
-        else:
-            negated = False
-
-        f: Filter
-        if tkn == "file":
-            f = FilterIsFile()
-        elif tkn == "folder":
-            f = FilterIsFolder()
-        elif tkn == "empty":
-            f = FilterIsEmpty()
-        else:
-            err_unknown_word(tkn)
-
-        if negated:
-            return [FilterNegated(f)]
-        else:
-            return [f]
-    else:
-        err_unknown_word(tkn)
-
-
 def tokenize(cmdstr: str) -> List[str]:
     # TODO: more sophisticated tokenization
     return cmdstr.split()
-
-
-def ensure_end_of_tokens(tkniter: Tokenizer) -> None:
-    try:
-        next(tkniter)
-    except StopIteration:
-        return
-    else:
-        # TODO: better error message
-        raise BatchOpSyntaxError("trailing input")
 
 
 def main_interactive(d: Optional[str]) -> None:
@@ -428,12 +381,20 @@ class FileSet:
         self.filters.append(FilterNegated(FilterIsNamed(pattern)))
         return self
 
+    def is_in(self, pattern: str) -> "FileSet":
+        self.filters.append(FilterIsIn(pattern))
+        return self
+
     def is_not_in(self, pattern: str) -> "FileSet":
-        self.filters.append(FilterIsNotIn(pattern))
+        self.filters.append(FilterNegated(FilterIsIn(pattern)))
+        return self
+
+    def is_hidden(self) -> "FileSet":
+        self.filters.append(FilterIsHidden())
         return self
 
     def is_not_hidden(self) -> "FileSet":
-        self.filters.append(FilterIsNotHidden())
+        self.filters.append(FilterNegated(FilterIsHidden()))
         return self
 
     # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
@@ -462,9 +423,11 @@ class FilterIsFile(Filter):
 @dataclass
 class FilterIsEmpty(Filter):
     def test(self, p: Path) -> bool:
-        # TODO: ignore files or filter them out?
-        # TODO: more efficient way to check if directory is empty
-        return not p.is_dir() or not list(p.glob("*"))
+        if p.is_dir():
+            # TODO: more efficient way to check if directory is empty
+            return len(list(p.glob("*"))) == 0
+        else:
+            return p.stat().st_size == 0
 
 
 @dataclass
@@ -477,21 +440,58 @@ class FilterIsNamed(Filter):
 
 
 @dataclass
-class FilterIsNotIn(Filter):
+class FilterIsIn(Filter):
     pattern: str
 
     def test(self, p: Path) -> bool:
         # TODO: messy
-        return not (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) and all(
-            not fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
+        return (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) or any(
+            fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
         )
 
 
 @dataclass
-class FilterIsNotHidden(Filter):
+class FilterIsHidden(Filter):
     def test(self, p: Path) -> bool:
         # TODO: cross-platform?
-        return all(not s.startswith(".") for s in p.parts)
+        # TODO: only consider parts from search root?
+        return any(s.startswith(".") for s in p.parts)
+
+
+@dataclass
+class FilterSizeGreater(Filter):
+    base: decimal.Decimal
+    multiple: int
+
+    def test(self, p: Path) -> bool:
+        return p.stat().st_size > (self.base * self.multiple)
+
+
+@dataclass
+class FilterSizeGreaterEqual(Filter):
+    base: decimal.Decimal
+    multiple: int
+
+    def test(self, p: Path) -> bool:
+        return p.stat().st_size >= (self.base * self.multiple)
+
+
+@dataclass
+class FilterSizeLess(Filter):
+    base: decimal.Decimal
+    multiple: int
+
+    def test(self, p: Path) -> bool:
+        return p.stat().st_size < (self.base * self.multiple)
+
+
+@dataclass
+class FilterSizeLessEqual(Filter):
+    base: decimal.Decimal
+    multiple: int
+
+    def test(self, p: Path) -> bool:
+        return p.stat().st_size <= (self.base * self.multiple)
 
 
 def parse_filter(fs: FileSet, line: str) -> FileSet:
@@ -579,14 +579,32 @@ def err_empty_input() -> NoReturn:
 
 
 PATTERNS = [
+    # 'that is a file'
     (
         [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("file")],
         FilterIsFile,
     ),
+    # 'that is a folder'
     (
         [POpt(PLit("that")), PLit("is"), PNot(), POpt(PLit("a")), PLit("folder")],
         FilterIsFolder,
     ),
+    # 'that is named X'
+    ([POpt(PLit("is")), PNot(), PLit("named"), PString()], FilterIsNamed),
+    # 'that is empty'
+    ([POpt(PLit("that")), PLit("is"), PNot(), PLit("empty")], FilterIsEmpty),
+    # '> X bytes'
+    ([PAnyLit([">", "gt"]), PDecimal(), PSizeUnit()], FilterSizeGreater),
+    # '>= X bytes'
+    ([PAnyLit([">=", "gte", "ge"]), PDecimal(), PSizeUnit()], FilterSizeGreaterEqual),
+    # '< X bytes'
+    ([PAnyLit(["<", "lt"]), PDecimal(), PSizeUnit()], FilterSizeLess),
+    # '<= X bytes'
+    ([PAnyLit(["<=", "lte", "le"]), PDecimal(), PSizeUnit()], FilterSizeLessEqual),
+    # 'that is in X'
+    ([POpt(PLit("that")), POpt(PLit("is")), PNot(), PLit("in"), PString()], FilterIsIn),
+    # 'that is hidden'
+    ([POpt(PLit("that")), POpt(PLit("is")), PNot(), PLit("hidden")], FilterIsHidden),
 ]
 
 
@@ -624,6 +642,25 @@ class TestPatternMatching(unittest.TestCase):
 
         m = try_phrase_match(pattern, [])
         self.assert_match(m)
+
+    def test_match_string(self):
+        pattern = [PLit("named"), PString()]
+        m = try_phrase_match(pattern, ["named", "test.txt"])
+        self.assert_match(m, captures=["test.txt"])
+
+        m = try_phrase_match(pattern, ["named"])
+        self.assert_no_match(m)
+
+    def test_match_any_lit(self):
+        pattern = [PAnyLit(["gt", ">"])]
+        m = try_phrase_match(pattern, ["gt"])
+        self.assert_match(m)
+
+        m = try_phrase_match(pattern, [">"])
+        self.assert_match(m)
+
+        m = try_phrase_match(pattern, ["<"])
+        self.assert_no_match(m)
 
     def test_match_complex(self):
         pattern = [POpt(PLit("is")), PNot(), PDecimal(), PSizeUnit()]
