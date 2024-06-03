@@ -5,6 +5,7 @@ ARMGNU ?= aarch64-linux-gnu
 # -nostartfiles: don't use the standard start-up routine
 # -ffreestanding: assume a 'freestanding' environment
 # -mgeneral-regs-only: only use general-purpose Arm registers
+#   details here: https://s-matyukevich.github.io/raspberry-pi-os/docs/lesson02/exercises.html
 C_OPS = -Wall -nostdlib -nostartfiles -ffreestanding -Iinclude -mgeneral-regs-only
 ASM_OPS = -Iinclude
 

@@ -1,3 +1,4 @@
+#include "arm/sysregs.h"
 #include "mm.h"
 
 .section ".text.boot"
@@ -14,6 +15,7 @@ spin_forever:
 	b spin_forever
 
 master:
+	// set some system registers to values defined in sysregs.h
 	ldr x0, =SCTLR_VALUE_MMU_DISABLED
 	msr sctlr_el1, x0
 
@@ -26,6 +28,7 @@ master:
 	ldr x0, =SPSR_VALUE
 	msr spsr_el3, x0
 
+	// jump to el1_entry at end of exception handler
 	adr x0, el1_entry
 	msr elr_el3, x0
 
