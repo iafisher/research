@@ -1,5 +1,5 @@
-#ifndef	P_TIMER_H
-#define	P_TIMER_H
+#ifndef	RPI_OS_P_TIMER_H
+#define	RPI_OS_P_TIMER_H
 
 #include "peripherals/base.h"
 
@@ -16,4 +16,4 @@
 #define TIMER_CS_M2	(1 << 2)
 #define TIMER_CS_M3	(1 << 3)
 
-#endif
+#endif  /* RPI_OS_P_TIMER_H */

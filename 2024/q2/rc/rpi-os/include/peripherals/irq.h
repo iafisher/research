@@ -1,5 +1,5 @@
-#ifndef	P_IRQ_H
-#define	P_IRQ_H
+#ifndef	RPI_OS_P_IRQ_H
+#define	RPI_OS_P_IRQ_H
 
 #include "peripherals/base.h"
 
@@ -19,4 +19,4 @@
 #define SYSTEM_TIMER_IRQ_2	(1 << 2)
 #define SYSTEM_TIMER_IRQ_3	(1 << 3)
 
-#endif
+#endif  /* RPI_OS_P_IRQ_H */

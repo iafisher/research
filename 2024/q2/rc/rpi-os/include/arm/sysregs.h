@@ -1,5 +1,5 @@
-#ifndef SYSREGS_H
-#define SYSREGS_H
+#ifndef RPI_OS_SYSREGS_H
+#define RPI_OS_SYSREGS_H
 
 // ***************************************
 // SCTLR_EL1, System Control Register (EL1), Page 2654 of AArch64-Reference-Manual.
@@ -50,4 +50,4 @@
 #define SPSR_EL1h			(5 << 0)
 #define SPSR_VALUE			(SPSR_MASK_ALL | SPSR_EL1h)
 
-#endif
+#endif  /* RPI_OS_SYSREGS_H */

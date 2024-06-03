@@ -1,5 +1,5 @@
-#ifndef ENTRY_H
-#define ENTRY_H
+#ifndef RPI_OS_ENTRY_H
+#define RPI_OS_ENTRY_H
 
 #define S_FRAME_SIZE			256 		// size of all saved registers
 
@@ -23,4 +23,4 @@
 #define FIQ_INVALID_EL0_32		14
 #define ERROR_INVALID_EL0_32		15
 
-#endif
+#endif  /* RPI_OS_ENTRY_H */

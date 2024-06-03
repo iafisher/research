@@ -1,5 +1,5 @@
-#ifndef	MM_H
-#define	MM_H
+#ifndef	RPI_OS_MM_H
+#define	RPI_OS_MM_H
 
 #define PAGE_SHIFT    12
 #define TABLE_SHIFT   9
@@ -14,4 +14,4 @@
 void memzero(unsigned long src, unsigned long n);
 #endif
 
-#endif
+#endif  /* RPI_OS_MM_H */

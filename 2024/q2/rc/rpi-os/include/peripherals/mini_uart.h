@@ -1,5 +1,5 @@
-#ifndef P_MINI_UART_H
-#define P_MINI_UART_H
+#ifndef RPI_OS_P_MINI_UART_H
+#define RPI_OS_P_MINI_UART_H
 
 #include "peripherals/base.h"
 
@@ -17,4 +17,4 @@
 #define AUX_MU_STAT_REG (PBASE+0x00215064)
 #define AUX_MU_BAUD_REG (PBASE+0x00215068)
 
-#endif
+#endif  /* RPI_OS_P_MINI_UART_H */

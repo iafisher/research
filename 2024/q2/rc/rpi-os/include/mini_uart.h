@@ -1,5 +1,5 @@
-#ifndef MINI_UART_H
-#define MINI_UART_H
+#ifndef RPI_OS_MINI_UART_H
+#define RPI_OS_MINI_UART_H
 
 void uart_init(void);
 char uart_recv(void);
@@ -8,4 +8,4 @@ void uart_send_string(char* str);
 
 void putc(void* p, char c);
 
-#endif
+#endif  /* RPI_OS_MINI_UART_H */
