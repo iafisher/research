@@ -104,7 +104,12 @@ def parse_command(cmdstr: str) -> ParsedCommand:
 
 def parse_np_and_preds(tokens: List[str]) -> List[Filter]:
     filters = parse_np(tokens)
+    filters.extend(parse_preds(tokens))
+    return filters
 
+
+def parse_preds(tokens: List[str]) -> List[Filter]:
+    filters = []
     i = 0
     while i < len(tokens):
         matched_one = False
@@ -317,6 +322,7 @@ def try_phrase_match(
 
 def tokenize(cmdstr: str) -> List[str]:
     # TODO: more sophisticated tokenization
+    # TODO: handle quoted strings
     return cmdstr.split()
 
 
@@ -327,8 +333,8 @@ def main_interactive(d: Optional[str]) -> None:
     while True:
         # TODO: separate counts for files and directories
         # TODO: default to ignoring .git + .gitignore?
-        n = sum(1 for _ in fs.resolve(root))
-        print(f"{plural(n, 'file')}")
+        current_files = list(fs.resolve(root))
+        print(f"{plural(len(current_files), 'file')}")
 
         try:
             s = input("> ").strip()
@@ -342,7 +348,24 @@ def main_interactive(d: Optional[str]) -> None:
         if not s:
             continue
 
-        fs = parse_filter(fs, s)
+        if s.lower() == "list":
+            for p in current_files:
+                print(p)
+            continue
+        elif s[0] == "!":
+            cmd = s[1:]
+            if cmd == "pop":
+                fs.pop()
+            elif cmd == "clear":
+                fs.clear()
+            else:
+                print(f"error: unknown directive: {cmd!r}")
+
+            continue
+
+        tokens = tokenize(s)
+        filters = parse_preds(tokens)
+        fs.filters.extend(filters)
 
 
 @dataclass
@@ -492,32 +515,6 @@ class FilterSizeLessEqual(Filter):
 
     def test(self, p: Path) -> bool:
         return p.stat().st_size <= (self.base * self.multiple)
-
-
-def parse_filter(fs: FileSet, line: str) -> FileSet:
-    # TODO: structural parsing
-    # TODO: handle commands (delete, rename, etc.)
-    # TODO: unify with parse_command
-
-    line = line.strip().lower()
-    if line == "is a file" or line == "is file":
-        return fs.is_file()
-    elif line == "is a folder" or line == "is folder":
-        return fs.is_folder()
-    elif line == "is not hidden":
-        return fs.is_not_hidden()
-    elif line.startswith("!"):
-        cmd = line[1:]
-        if cmd == "pop":
-            fs.pop()
-            return fs
-        elif cmd == "clear":
-            fs.clear()
-            return fs
-        else:
-            err_unknown_command(cmd)
-    else:
-        raise BatchOpSyntaxError("could not parse")
 
 
 class BatchOp:
