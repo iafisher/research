@@ -30,12 +30,12 @@ Interactive interface:
 
 TODO: `--make-sandbox`
 TODO: `rename` command (needs design)
-TODO: human-readable parser (needs design)
 TODO: gitignore support
 TODO: `move` command
 TODO: `replace` command
 TODO: `run` command
 TODO: profiling + optimization
+TODO: adjectives
 
 """
 
@@ -49,7 +49,17 @@ import sys
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Generator, Iterator, List, NoReturn, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Generator,
+    Iterator,
+    List,
+    NoReturn,
+    Optional,
+    Tuple,
+    Union,
+)
 
 
 PathLike = Union[str, Path]
@@ -317,12 +327,57 @@ def try_phrase_match(
 
 
 def tokenize(cmdstr: str) -> List[str]:
-    # TODO: more sophisticated tokenization
-    # TODO: handle quoted strings
-    return cmdstr.split()
+    r = []
+    i = 0
+
+    while i < len(cmdstr):
+        c = cmdstr[i]
+        if c.isspace():
+            i = consume_whitespace(cmdstr, i)
+            continue
+        elif c == "'" or c == '"':
+            word, i = consume_quote(cmdstr, i + 1, c)
+        else:
+            word, i = consume_word(cmdstr, i)
+
+        r.append(word)
+
+    return r
+
+
+def consume_word(s: str, i: int) -> Tuple[str, int]:
+    start = i
+    while i < len(s):
+        c = s[i]
+        if c.isspace() or c == "'" or c == '"':
+            break
+        i += 1
+
+    return s[start:i], i
+
+
+def consume_whitespace(s: str, i: int) -> int:
+    while i < len(s) and s[i].isspace():
+        i += 1
+
+    return i
+
+
+def consume_quote(s: str, i: int, delimiter: str) -> Tuple[str, int]:
+    start = i
+    while i < len(s):
+        # TODO: backslash escapes
+        c = s[i]
+        if c == delimiter:
+            break
+        i += 1
+
+    return s[start:i], i + 1
 
 
 def main_interactive(d: Optional[str]) -> None:
+    import readline
+
     root = path_or_default(d)
 
     fs = FileSet()
@@ -732,6 +787,18 @@ class TestPatternMatching(unittest.TestCase):
 
     def assert_no_match(self, m: Optional[PhraseMatch]) -> None:
         self.assertIsNone(m)
+
+
+class TestTokenize(unittest.TestCase):
+    def test_simple_words(self):
+        self.assertEqual(tokenize("list all files"), ["list", "all", "files"])
+
+    def test_quoted_strings(self):
+        self.assertEqual(tokenize("named '*.md'"), ["named", "*.md"])
+        self.assertEqual(tokenize('named "To Do *.md"'), ["named", "To Do *.md"])
+
+    def test_weird_whitespace(self):
+        self.assertEqual(tokenize("    a  b\tc   "), ["a", "b", "c"])
 
 
 if __name__ == "__main__":
