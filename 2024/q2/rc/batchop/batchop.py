@@ -31,10 +31,15 @@ Interactive interface:
 TODO: `--make-sandbox`
 TODO: `rename` command (needs design)
 TODO: gitignore support
+  (if current directory has .git, apply .gitignore)
+  probably also ignore hidden files by default
 TODO: `move` command
 TODO: `replace` command
 TODO: `run` command
+TODO: `trash` command
 TODO: profiling + optimization
+  idea: walk the tree, filter functions can prevent sub-traversal as well as
+        excluding individual paths
 TODO: adjectives
 
 """
@@ -380,10 +385,17 @@ def main_interactive(d: Optional[str]) -> None:
 
     root = path_or_default(d)
 
-    fs = FileSet()
+    fs = FileSet.with_default_filters()
+    if len(fs.filters) > 0:
+        print("Filters applied by default: ")
+        for f in fs.filters:
+            print(f"  {f}")
+        print()
+
     while True:
         # TODO: separate counts for files and directories
         # TODO: default to ignoring .git + .gitignore?
+        # TODO: don't re-print if last command couldn't have changed count (e.g., !filters)
         current_files = list(fs.resolve(root))
         print(f"{plural(len(current_files), 'file')}")
 
@@ -409,6 +421,11 @@ def main_interactive(d: Optional[str]) -> None:
                 fs.pop()
             elif cmd == "clear":
                 fs.clear()
+            elif cmd == "filter" or cmd == "filters":
+                for f in fs.filters:
+                    print(f)
+
+                print()
             else:
                 print(f"error: unknown directive: {cmd!r}")
 
@@ -422,6 +439,10 @@ def main_interactive(d: Optional[str]) -> None:
 @dataclass
 class FileSet:
     filters: List[Filter] = dataclasses.field(default_factory=list)
+
+    @classmethod
+    def with_default_filters(cls) -> "FileSet":
+        return FileSet().is_not_hidden()
 
     def resolve(self, root: Path) -> Generator[Path, None, None]:
         ps = root.glob("**/*")
@@ -471,7 +492,7 @@ class FileSet:
         self.filters.append(FilterNegated(FilterIsHidden()))
         return self
 
-    # TODO: is_not_git_ignored() -- https://github.com/mherrmann/gitignore_parser
+    # TODO: is_git_ignored() -- https://github.com/mherrmann/gitignore_parser
 
 
 @dataclass
@@ -481,17 +502,26 @@ class FilterNegated(Filter):
     def test(self, p: Path) -> bool:
         return not self.inner.test(p)
 
+    def __str__(self) -> str:
+        return f"not ({self.inner})"
+
 
 @dataclass
 class FilterIsFolder(Filter):
     def test(self, p: Path) -> bool:
         return p.is_dir()
 
+    def __str__(self) -> str:
+        return "is folder"
+
 
 @dataclass
 class FilterIsFile(Filter):
     def test(self, p: Path) -> bool:
         return p.is_file()
+
+    def __str__(self) -> str:
+        return "is file"
 
 
 @dataclass
@@ -503,6 +533,9 @@ class FilterIsEmpty(Filter):
         else:
             return p.stat().st_size == 0
 
+    def __str__(self) -> str:
+        return "is empty"
+
 
 @dataclass
 class FilterIsNamed(Filter):
@@ -511,6 +544,9 @@ class FilterIsNamed(Filter):
     def test(self, p: Path) -> bool:
         # TODO: case-insensitive file systems?
         return fnmatch.fnmatch(p.name, self.pattern)
+
+    def __str__(self) -> str:
+        return f"is named {self.pattern!r}"
 
 
 @dataclass
@@ -523,6 +559,9 @@ class FilterIsIn(Filter):
             fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
         )
 
+    def __str__(self) -> str:
+        return f"is in {self.pattern!r}"
+
 
 @dataclass
 class FilterIsHidden(Filter):
@@ -530,6 +569,9 @@ class FilterIsHidden(Filter):
         # TODO: cross-platform?
         # TODO: only consider parts from search root?
         return any(s.startswith(".") for s in p.parts)
+
+    def __str__(self) -> str:
+        return "is hidden"
 
 
 @dataclass
@@ -540,6 +582,10 @@ class FilterSizeGreater(Filter):
     def test(self, p: Path) -> bool:
         return p.stat().st_size > (self.base * self.multiple)
 
+    def __str__(self) -> str:
+        # TODO: human-readable units
+        return f"> {self.base * self.multiple} bytes"
+
 
 @dataclass
 class FilterSizeGreaterEqual(Filter):
@@ -548,6 +594,9 @@ class FilterSizeGreaterEqual(Filter):
 
     def test(self, p: Path) -> bool:
         return p.stat().st_size >= (self.base * self.multiple)
+
+    def __str__(self) -> str:
+        return f">= {self.base * self.multiple} bytes"
 
 
 @dataclass
@@ -558,6 +607,9 @@ class FilterSizeLess(Filter):
     def test(self, p: Path) -> bool:
         return p.stat().st_size < (self.base * self.multiple)
 
+    def __str__(self) -> str:
+        return f"< {self.base * self.multiple} bytes"
+
 
 @dataclass
 class FilterSizeLessEqual(Filter):
@@ -566,6 +618,9 @@ class FilterSizeLessEqual(Filter):
 
     def test(self, p: Path) -> bool:
         return p.stat().st_size <= (self.base * self.multiple)
+
+    def __str__(self) -> str:
+        return f"<= {self.base * self.multiple} bytes"
 
 
 @dataclass
@@ -580,6 +635,9 @@ class FilterHasExtension(Filter):
 
     def test(self, p: Path) -> bool:
         return p.suffix == self.ext
+
+    def __str__(self) -> str:
+        return f"has extension {self.ext!r}"
 
 
 class BatchOp:
