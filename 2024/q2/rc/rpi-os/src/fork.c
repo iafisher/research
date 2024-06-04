@@ -6,6 +6,7 @@ int copy_process(unsigned long fn, unsigned long arg) {
   preempt_disable();
   struct task_struct* p = (struct task_struct*)get_free_page();
   if (!p) {
+    preempt_enable();
     return 1;
   }
 
@@ -21,8 +22,13 @@ int copy_process(unsigned long fn, unsigned long arg) {
   p->cpu_context.sp = (unsigned long)p + THREAD_SIZE;
 
   int pid = g_num_running_tasks++;
+  if (pid >= NTASKS) {
+    free_page(p);
+    preempt_enable();
+    return 1;
+  }
+
   g_tasks[pid] = p;
   preempt_enable();
-
   return 0;
 }

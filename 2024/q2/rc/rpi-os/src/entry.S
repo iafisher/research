@@ -141,9 +141,11 @@ el1_irq:
 	kernel_exit
 
 .globl ret_from_fork
+// void ret_from_fork(void);
 ret_from_fork:
 	bl schedule_tail
 	// copy_process() puts the argument in x20 and the instruction pointer in x19
+	// these two lines are equivalent to `fn(arg)`
 	mov x0, x20
 	blr x19
 

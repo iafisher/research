@@ -1,3 +1,4 @@
+// void memzero(unsigned long src, unsigned long n);
 .globl memzero
 memzero:
 	str xzr, [x0], #8
