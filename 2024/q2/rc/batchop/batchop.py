@@ -33,6 +33,7 @@ TODO: `rename` command (needs design)
 TODO: gitignore support
   (if current directory has .git, apply .gitignore)
   probably also ignore hidden files by default
+  tricky when you have multiple gitignores in the same repository
 TODO: `move` command
 TODO: `replace` command
 TODO: `run` command
@@ -41,6 +42,20 @@ TODO: profiling + optimization
   idea: walk the tree, filter functions can prevent sub-traversal as well as
         excluding individual paths
 TODO: adjectives
+
+Profiling:
+
+    before changing filter to tree-walking:
+
+        5.97s user 6.29s system 88% cpu 13.838 total
+        6.13s user 7.23s system 82% cpu 16.116 total
+
+    after changing filter:
+
+        3.31s user 7.44s system 81% cpu 13.131 total
+        3.41s user 8.11s system 79% cpu 14.537 total
+
+TODO: 'is not in __pycache__' gives different results before and after optimization
 
 """
 
@@ -70,10 +85,19 @@ from typing import (
 PathLike = Union[str, Path]
 
 
+@dataclass
+class FilterResult:
+    should_include: bool
+    should_recurse: bool = True
+
+
 class Filter(abc.ABC):
     @abc.abstractmethod
-    def test(self, p: Path) -> bool:
+    def test(self, p: Path) -> FilterResult:
         pass
+
+    def negate(self) -> "Filter":
+        return FilterNegated(self)
 
 
 def main_execute(cmdstr: str, *, directory: Optional[str]) -> None:
@@ -131,7 +155,7 @@ def parse_preds(tokens: List[str]) -> List[Filter]:
                 if filter_constructor is not None:
                     f = filter_constructor(*m.captures)
                     if m.negated:
-                        f = FilterNegated(f)
+                        f = f.negate()
 
                     filters.append(f)
 
@@ -445,13 +469,25 @@ class FileSet:
         return FileSet().is_not_hidden()
 
     def resolve(self, root: Path) -> Generator[Path, None, None]:
-        ps = root.glob("**/*")
-        for p in ps:
-            if all(f.test(p) for f in self.filters):
-                yield p
+        stack = [root]
+        while stack:
+            item = stack.pop()
+            results = [f.test(item) for f in self.filters]
+            should_include = all(r.should_include for r in results)
+            should_recurse = all(r.should_recurse for r in results)
+
+            if should_include:
+                yield item
+
+            if should_recurse:
+                for child in item.glob("*"):
+                    stack.append(child)
 
     def pop(self) -> None:
         self.filters.pop()
+
+    def push(self, f: Filter) -> None:
+        self.filters.append(f)
 
     def clear(self) -> None:
         self.filters.clear()
@@ -499,8 +535,12 @@ class FileSet:
 class FilterNegated(Filter):
     inner: Filter
 
-    def test(self, p: Path) -> bool:
-        return not self.inner.test(p)
+    def test(self, p: Path) -> FilterResult:
+        r = self.inner.test(p)
+        # TODO: is it always right to pass should_recurse through unchanged?
+        return FilterResult(
+            should_include=not r.should_include, should_recurse=r.should_recurse
+        )
 
     def __str__(self) -> str:
         return f"not ({self.inner})"
@@ -508,8 +548,8 @@ class FilterNegated(Filter):
 
 @dataclass
 class FilterIsFolder(Filter):
-    def test(self, p: Path) -> bool:
-        return p.is_dir()
+    def test(self, p: Path) -> FilterResult:
+        return FilterResult(should_include=p.is_dir())
 
     def __str__(self) -> str:
         return "is folder"
@@ -517,8 +557,8 @@ class FilterIsFolder(Filter):
 
 @dataclass
 class FilterIsFile(Filter):
-    def test(self, p: Path) -> bool:
-        return p.is_file()
+    def test(self, p: Path) -> FilterResult:
+        return FilterResult(should_include=p.is_file())
 
     def __str__(self) -> str:
         return "is file"
@@ -526,12 +566,14 @@ class FilterIsFile(Filter):
 
 @dataclass
 class FilterIsEmpty(Filter):
-    def test(self, p: Path) -> bool:
+    def test(self, p: Path) -> FilterResult:
         if p.is_dir():
             # TODO: more efficient way to check if directory is empty
-            return len(list(p.glob("*"))) == 0
+            r = len(list(p.glob("*"))) == 0
         else:
-            return p.stat().st_size == 0
+            r = p.stat().st_size == 0
+
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return "is empty"
@@ -541,9 +583,10 @@ class FilterIsEmpty(Filter):
 class FilterIsNamed(Filter):
     pattern: str
 
-    def test(self, p: Path) -> bool:
+    def test(self, p: Path) -> FilterResult:
         # TODO: case-insensitive file systems?
-        return fnmatch.fnmatch(p.name, self.pattern)
+        r = fnmatch.fnmatch(p.name, self.pattern)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return f"is named {self.pattern!r}"
@@ -553,22 +596,53 @@ class FilterIsNamed(Filter):
 class FilterIsIn(Filter):
     pattern: str
 
-    def test(self, p: Path) -> bool:
+    def test(self, p: Path) -> FilterResult:
         # TODO: messy
-        return (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) or any(
+        # TODO: shouldn't include the directory itself
+        r = (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) or any(
             fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
         )
+        return FilterResult(should_include=r)
+
+    def negate(self) -> Filter:
+        return FilterIsNotIn(self.pattern)
 
     def __str__(self) -> str:
         return f"is in {self.pattern!r}"
 
 
 @dataclass
+class FilterIsNotIn(Filter):
+    pattern: str
+
+    def test(self, p: Path) -> FilterResult:
+        # pattern can be:
+        #  absolute/relative file path (e.g., includes slash)
+        #  fixed string (matches name exactly)
+        #  glob pattern
+        #  regex
+
+        if p.is_dir() and fnmatch.fnmatch(p.name, self.pattern):
+            return FilterResult(should_include=False, should_recurse=False)
+        else:
+            # assumption: if a parent directory was excluded we never got here in the first place
+            # b/c we passed should_recurse=False above
+            return FilterResult(should_include=True)
+
+    def negate(self) -> Filter:
+        return FilterIsIn(self.pattern)
+
+    def __str__(self) -> str:
+        return f"is not in {self.pattern!r}"
+
+
+@dataclass
 class FilterIsHidden(Filter):
-    def test(self, p: Path) -> bool:
+    def test(self, p: Path) -> FilterResult:
         # TODO: cross-platform?
         # TODO: only consider parts from search root?
-        return any(s.startswith(".") for s in p.parts)
+        r = any(s.startswith(".") for s in p.parts)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return "is hidden"
@@ -579,8 +653,9 @@ class FilterSizeGreater(Filter):
     base: decimal.Decimal
     multiple: int
 
-    def test(self, p: Path) -> bool:
-        return p.stat().st_size > (self.base * self.multiple)
+    def test(self, p: Path) -> FilterResult:
+        r = p.stat().st_size > (self.base * self.multiple)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         # TODO: human-readable units
@@ -592,8 +667,9 @@ class FilterSizeGreaterEqual(Filter):
     base: decimal.Decimal
     multiple: int
 
-    def test(self, p: Path) -> bool:
-        return p.stat().st_size >= (self.base * self.multiple)
+    def test(self, p: Path) -> FilterResult:
+        r = p.stat().st_size >= (self.base * self.multiple)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return f">= {self.base * self.multiple} bytes"
@@ -604,8 +680,9 @@ class FilterSizeLess(Filter):
     base: decimal.Decimal
     multiple: int
 
-    def test(self, p: Path) -> bool:
-        return p.stat().st_size < (self.base * self.multiple)
+    def test(self, p: Path) -> FilterResult:
+        r = p.stat().st_size < (self.base * self.multiple)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return f"< {self.base * self.multiple} bytes"
@@ -616,8 +693,9 @@ class FilterSizeLessEqual(Filter):
     base: decimal.Decimal
     multiple: int
 
-    def test(self, p: Path) -> bool:
-        return p.stat().st_size <= (self.base * self.multiple)
+    def test(self, p: Path) -> FilterResult:
+        r = p.stat().st_size <= (self.base * self.multiple)
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return f"<= {self.base * self.multiple} bytes"
@@ -633,8 +711,9 @@ class FilterHasExtension(Filter):
         else:
             self.ext = "." + ext
 
-    def test(self, p: Path) -> bool:
-        return p.suffix == self.ext
+    def test(self, p: Path) -> FilterResult:
+        r = p.suffix == self.ext
+        return FilterResult(should_include=r)
 
     def __str__(self) -> str:
         return f"has extension {self.ext!r}"
