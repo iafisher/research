@@ -585,8 +585,7 @@ class FilterIsFile(Filter):
 class FilterIsEmpty(Filter):
     def test(self, p: Path) -> FilterResult:
         if p.is_dir():
-            # TODO: more efficient way to check if directory is empty
-            r = len(list(p.glob("*"))) == 0
+            r = any(p.iterdir())
         else:
             r = p.stat().st_size == 0
 
@@ -611,6 +610,12 @@ class FilterIsNamed(Filter):
 
 @dataclass
 class FilterIsIn(Filter):
+    # pattern can be:
+    #   fixed string (matches name exactly)
+    #   glob pattern
+    #   TODO: absolute/relative file path (e.g., includes slash)
+    #     tricky to handle relative file paths because we need to know root directory
+    #   TODO: regex
     pattern: str
 
     def test(self, p: Path) -> FilterResult:
@@ -633,12 +638,6 @@ class FilterIsNotIn(Filter):
     pattern: str
 
     def test(self, p: Path) -> FilterResult:
-        # pattern can be:
-        #  absolute/relative file path (e.g., includes slash)
-        #  fixed string (matches name exactly)
-        #  glob pattern
-        #  regex
-
         if p.is_dir() and fnmatch.fnmatch(p.name, self.pattern):
             return FilterResult(False, should_recurse=False)
         else:
