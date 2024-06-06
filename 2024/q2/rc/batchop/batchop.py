@@ -419,13 +419,17 @@ def main_interactive(d: Optional[str]) -> None:
             print(f"  {f}")
         print()
 
+    # whether to re-calculate the file set on next iteration of loop
+    recalculate = True
+    current_file = []
     while True:
         # TODO: separate counts for files and directories
         # TODO: default to ignoring .git + .gitignore?
-        # TODO: don't re-print if last command couldn't have changed count (e.g., !filters)
-        current_files = list(fs.resolve(root))
-        print(f"{plural(len(current_files), 'file')}")
+        if recalculate:
+            current_files = list(fs.resolve(root))
+            print(f"{plural(len(current_files), 'file')}")
 
+        recalculate = False
         try:
             s = input("> ").strip()
         except BatchOpSyntaxError as e:
@@ -446,21 +450,29 @@ def main_interactive(d: Optional[str]) -> None:
             cmd = s[1:]
             if cmd == "pop":
                 fs.pop()
+                recalculate = True
             elif cmd == "clear":
                 fs.clear()
+                recalculate = True
             elif cmd == "filter" or cmd == "filters":
                 for f in fs.filters:
                     print(f)
-
-                print()
+            elif cmd == "h" or cmd == "help":
+                print("Directives:")
+                print("  !clear              clear all filters")
+                print("  !filter/!filters    print list of current filters")
+                print("  !pop                remove the last-applied filter")
             else:
-                print(f"error: unknown directive: {cmd!r}")
+                print(
+                    f"error: unknown directive: {cmd!r} (enter !help to see available directives)"
+                )
 
             continue
 
         tokens = tokenize(s)
         filters = parse_preds(tokens)
         fs.filters.extend(filters)
+        recalculate = True
 
 
 @dataclass
