@@ -472,9 +472,11 @@ class FileSet:
         return FileSet().is_not_hidden()
 
     def resolve(self, root: Path) -> Generator[Path, None, None]:
+        # TODO: does this give a reasonable iteration order?
         stack = [root]
         while stack:
             item = stack.pop()
+            # TODO: terminate filter application early if possible
             results = [f.test(item) for f in self.filters]
             should_include = all(r.should_include for r in results)
             should_recurse = all(r.should_recurse for r in results)
@@ -482,8 +484,8 @@ class FileSet:
             if should_include:
                 yield item
 
-            if should_recurse:
-                for child in item.glob("*"):
+            if should_recurse and item.is_dir():
+                for child in item.iterdir():
                     stack.append(child)
 
     def pop(self) -> None:
