@@ -56,6 +56,7 @@ Profiling:
         3.41s user 8.11s system 79% cpu 14.537 total
 
 TODO: 'is not in __pycache__' gives different results before and after optimization
+TODO: support absolute/relative paths for patterns
 
 """
 
@@ -97,6 +98,8 @@ class Filter(abc.ABC):
         pass
 
     def negate(self) -> "Filter":
+        # most filters can be negated generically but some have a specialized negation that is more
+        # efficient
         return FilterNegated(self)
 
 
@@ -517,7 +520,7 @@ class FileSet:
         return self
 
     def is_not_in(self, pattern: str) -> "FileSet":
-        self.filters.append(FilterNegated(FilterIsIn(pattern)))
+        self.filters.append(FilterIsNotIn(pattern))
         return self
 
     def is_hidden(self) -> "FileSet":
@@ -525,7 +528,7 @@ class FileSet:
         return self
 
     def is_not_hidden(self) -> "FileSet":
-        self.filters.append(FilterNegated(FilterIsHidden()))
+        self.filters.append(FilterIsNotHidden())
         return self
 
     # TODO: is_git_ignored() -- https://github.com/mherrmann/gitignore_parser
@@ -549,7 +552,7 @@ class FilterNegated(Filter):
 @dataclass
 class FilterIsFolder(Filter):
     def test(self, p: Path) -> FilterResult:
-        return FilterResult(should_include=p.is_dir())
+        return FilterResult(p.is_dir())
 
     def __str__(self) -> str:
         return "is folder"
@@ -558,7 +561,7 @@ class FilterIsFolder(Filter):
 @dataclass
 class FilterIsFile(Filter):
     def test(self, p: Path) -> FilterResult:
-        return FilterResult(should_include=p.is_file())
+        return FilterResult(p.is_file())
 
     def __str__(self) -> str:
         return "is file"
@@ -573,7 +576,7 @@ class FilterIsEmpty(Filter):
         else:
             r = p.stat().st_size == 0
 
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return "is empty"
@@ -586,7 +589,7 @@ class FilterIsNamed(Filter):
     def test(self, p: Path) -> FilterResult:
         # TODO: case-insensitive file systems?
         r = fnmatch.fnmatch(p.name, self.pattern)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return f"is named {self.pattern!r}"
@@ -602,7 +605,7 @@ class FilterIsIn(Filter):
         r = (p.is_dir() and fnmatch.fnmatch(p.name, self.pattern)) or any(
             fnmatch.fnmatch(s, self.pattern) for s in p.parts[:-1]
         )
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def negate(self) -> Filter:
         return FilterIsNotIn(self.pattern)
@@ -623,14 +626,11 @@ class FilterIsNotIn(Filter):
         #  regex
 
         if p.is_dir() and fnmatch.fnmatch(p.name, self.pattern):
-            return FilterResult(should_include=False, should_recurse=False)
+            return FilterResult(False, should_recurse=False)
         else:
             # assumption: if a parent directory was excluded we never got here in the first place
             # b/c we passed should_recurse=False above
-            return FilterResult(should_include=True)
-
-    def negate(self) -> Filter:
-        return FilterIsIn(self.pattern)
+            return FilterResult(True)
 
     def __str__(self) -> str:
         return f"is not in {self.pattern!r}"
@@ -642,10 +642,26 @@ class FilterIsHidden(Filter):
         # TODO: cross-platform?
         # TODO: only consider parts from search root?
         r = any(s.startswith(".") for s in p.parts)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
+
+    def negate(self) -> Filter:
+        return FilterIsNotHidden()
 
     def __str__(self) -> str:
         return "is hidden"
+
+
+@dataclass
+class FilterIsNotHidden(Filter):
+    def test(self, p: Path) -> FilterResult:
+        # TODO: cross-platform?
+        if p.name.startswith("."):
+            return FilterResult(False, should_recurse=False)
+        else:
+            return FilterResult(True)
+
+    def __str__(self) -> str:
+        return "is not hidden"
 
 
 @dataclass
@@ -655,7 +671,7 @@ class FilterSizeGreater(Filter):
 
     def test(self, p: Path) -> FilterResult:
         r = p.stat().st_size > (self.base * self.multiple)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         # TODO: human-readable units
@@ -669,7 +685,7 @@ class FilterSizeGreaterEqual(Filter):
 
     def test(self, p: Path) -> FilterResult:
         r = p.stat().st_size >= (self.base * self.multiple)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return f">= {self.base * self.multiple} bytes"
@@ -682,7 +698,7 @@ class FilterSizeLess(Filter):
 
     def test(self, p: Path) -> FilterResult:
         r = p.stat().st_size < (self.base * self.multiple)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return f"< {self.base * self.multiple} bytes"
@@ -695,7 +711,7 @@ class FilterSizeLessEqual(Filter):
 
     def test(self, p: Path) -> FilterResult:
         r = p.stat().st_size <= (self.base * self.multiple)
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return f"<= {self.base * self.multiple} bytes"
@@ -713,7 +729,7 @@ class FilterHasExtension(Filter):
 
     def test(self, p: Path) -> FilterResult:
         r = p.suffix == self.ext
-        return FilterResult(should_include=r)
+        return FilterResult(r)
 
     def __str__(self) -> str:
         return f"has extension {self.ext!r}"
