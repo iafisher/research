@@ -8,7 +8,11 @@
 
 #define THREAD_SIZE 4096
 #define NTASKS 64
+
 #define TASK_RUNNING 0
+#define TASK_ZOMBIE  1
+
+#define PF_KTHREAD 0x00000002
 
 extern struct task_struct* g_current;
 extern struct task_struct* g_tasks[NTASKS];
@@ -41,6 +45,8 @@ struct task_struct {
   long priority;
   /* if non-zero, task is doing something critical and should not be preempted */
   long preempt_count;
+  unsigned long stack;
+  unsigned long flags;
 };
 
 void sched_init(void);
@@ -50,6 +56,7 @@ void preempt_disable(void);
 void preempt_enable(void);
 void switch_to(struct task_struct* next);
 void cpu_switch_to(struct task_struct* prev, struct task_struct* next);
+void exit_process(void);
 
 #endif
 #endif  /* RPI_OS_SCHED_H */

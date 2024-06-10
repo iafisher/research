@@ -1,6 +1,7 @@
 #include "sched.h"
 
 #include "irq.h"
+#include "mm.h"
 #include "printf.h"
 
 static struct task_struct init_task = {
@@ -48,6 +49,7 @@ void timer_tick() {
 }
 
 void _schedule() {
+  printf("_schedule\r\n");
   // note that preemption is disabled but interrupts are allowed
   preempt_disable();
   int next;
@@ -90,4 +92,22 @@ void switch_to(struct task_struct* next) {
   struct task_struct* prev = g_current;
   g_current = next;
   cpu_switch_to(prev, next);
+}
+
+void exit_process() {
+  preempt_disable();
+
+  for (int i = 0; i < NTASKS; i++) {
+    if (g_tasks[i] == g_current) {
+      g_tasks[i]->state = TASK_ZOMBIE;
+      break;
+    }
+  }
+
+  if (g_current->stack) {
+    free_page(g_current->stack);
+  }
+
+  preempt_enable();
+  schedule();
 }

@@ -22,8 +22,10 @@ main() {
   cp config/bare_metal.txt "$CONFIG_PATH"
 
   ls -l "$SD_PATH"/*.img
+
+  diskutil eject /Volumes/bootfs
   echo
-  echo "SD card flashed with bare-metal OS"
+  echo "SD card flashed with bare-metal OS and disk ejected."
 }
 
 main "$@"
