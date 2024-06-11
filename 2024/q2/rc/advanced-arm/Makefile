@@ -7,7 +7,8 @@ SRC_DIR = src
 INCLUDE_DIR = include
 MAIN = $(BUILD_DIR)/main
 
-CC_OPS = -Wall -I$(INCLUDE_DIR)
+CC_OPS = -Wall -I$(INCLUDE_DIR) -g -O0
+AS_OPS = -g
 
 all: $(MAIN)
 
@@ -25,7 +26,7 @@ $(BUILD_DIR)/%_c.o: $(SRC_DIR)/%.c $(HEADER_FILES)
 	$(CC) $(CC_OPS) -c $< -o $@
 
 $(BUILD_DIR)/%_s.o: $(SRC_DIR)/%.S
-	$(AS) -o $@ $<
+	$(AS) $(AS_OPS) -o $@ $<
 
 # Linker flags copied from this tutorial:
 #   https://smist08.wordpress.com/2021/01/08/apple-m1-assembly-language-hello-world/
