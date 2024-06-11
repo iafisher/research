@@ -3,7 +3,12 @@
 #include "faster.h"
 
 int main(int argc, char* argv[]) {
-  int result = add_together(20, 22);
-  printf("Result: %d\n", result);
+  int result = ian_add(20, 22);
+  printf("ian_add result: %d\n", result);
+
+  const char* s = "hello";
+  result = ian_strlen(s);
+  printf("ian_strlen result: %d\n", result);
+
   return 0;
 }
