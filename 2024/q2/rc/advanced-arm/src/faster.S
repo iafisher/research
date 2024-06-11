@@ -34,3 +34,18 @@ ian_rot13_no_mod:
 	b ian_rot13_loop
 ian_rot13_end:
 	ret
+
+// void ian_overflow(void)
+.globl ian_overflow
+ian_overflow:
+	mov x8, 0xffffffffffffffff
+	mov x9, 0xffffffffffffffff
+	add x10, x8, x9
+	ret
+
+// struct { u64, int } ian_add_check_overflow(u64, u64)
+.globl ian_add_check_overflow
+ian_add_check_overflow:
+	adds x0, x0, x1
+	cset x1, cs
+	ret

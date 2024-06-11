@@ -8,7 +8,7 @@ INCLUDE_DIR = include
 MAIN = $(BUILD_DIR)/main
 
 CC_OPS = -Wall -I$(INCLUDE_DIR) -g -O0
-AS_OPS = -g
+AS_OPS = -g -arch arm64
 
 all: $(MAIN)
 
