@@ -13,3 +13,8 @@ Rust has excellent support for co-routines, which we are being actively developi
 I meet into someone I knew.
 
   Confused with "run into"
+
+We chose this particular algorithms since it is both work-conserving and has a special mechanism for low-latency wake-up of a domain when it receives an event.
+
+  "algorithm" --> "algorithms"
+  From the Xen paper
