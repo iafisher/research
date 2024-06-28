@@ -1,8 +1,12 @@
+import argparse
 import csv
 import datetime
 import itertools
 import random
 import re
+import sys
+import time
+from collections import Counter
 from pathlib import Path
 
 import inflect
@@ -20,7 +24,8 @@ def iambic(n):
 
 
 IAMB10 = iambic(10)
-REGEX = re.compile(r"[.,;:/\n] +")
+SENTENCE_SPLIT = re.compile(r"[.,;:/\n] +")
+WORD_SPLIT = re.compile(r"(https?://[^ ]+|[\s.;,:/()]+)")
 
 
 def extract_comments():
@@ -41,24 +46,102 @@ def look_for_poem(dct, row) -> bool:
     global ntotal
     global nfailed
 
-    text = row["text"]
+    text = (
+        row["text"]
+        .replace("&#x27;", "'")
+        .replace("&quot;", '"')
+        .replace("&#x2F", "/")
+        .replace("<p>", "\n\n")
+    )
+    words = WORD_SPLIT.split(text)
+    words_lower = [w.lower() for w in words]
 
-    stresses = scan(dct, text)
+    # if is_repetitive(words):
+    #     return True
 
     ntotal += 1
-    if stresses is None:
-        nfailed += 1
-        return False
+    # stresses = scan(dct, text)
+    # if stresses is None:
+    #     nfailed += 1
+    #     return False
 
-    feet = make_feet(stresses)
+    # feet = make_feet(stresses)
 
-    if is_iambic(feet):
+    # if is_sonnet(feet) and is_poetic(words_lower):
+    #     return True
+
+    if is_regular_length(dct, text):
         return True
 
-    if is_haiku(text):
+    # if is_iambic(feet):
+    #     return True
+
+    # if is_haiku(text):
+    #     return True
+
+    return False
+
+
+def is_regular_length(dct, text):
+    if "<a href" in text or text.startswith("&gt;"):
+        return False
+
+    lines = [l for l in SENTENCE_SPLIT.split(text) if l]
+    if len(lines) < 5:
+        return False
+
+    stresscounts = list(
+        sorted(Counter(len(scan(dct, line) or []) & ~1 for line in lines))
+    )
+    if (
+        0 < len(stresscounts) < 3
+        and stresscounts[0] != 0
+        and (len(stresscounts) == 1 or abs(stresscounts[1] - stresscounts[0]) < 3)
+    ):
+        print(stresscounts)
         return True
 
     return False
+
+
+REPETITIVE_SKIP = {"you're", "couldn't", "chicken", "buffalo"}
+
+
+def is_repetitive(words):
+    if not (30 <= len(words) <= 100):
+        return False
+
+    word_counts = Counter(
+        word.lower()
+        for word in words
+        if len(word) > 5 and not word.isspace() and word not in REPETITIVE_SKIP
+    )
+
+    if word_counts["and"] > 5:
+        return True
+
+    # items = word_counts.most_common(1)
+    # if not items:
+    #     return False
+
+    # word, n = items[0]
+    # if n > 5:
+    #     print(word)
+    #     if word == "january":
+    #         return True
+
+    return False
+
+
+def is_sonnet(feet):
+    return abs(sum(len(foot) for foot in feet) - (14 * 10)) < 5
+
+
+POETIC_WORDS = {"flower", "rose", "roses", "nightingale"}
+
+
+def is_poetic(words_lower):
+    return any(w in words_lower for w in POETIC_WORDS)
 
 
 def is_iambic(feet):
@@ -66,7 +149,7 @@ def is_iambic(feet):
 
 
 def is_haiku(text):
-    lines = [l for l in REGEX.split(text) if l]
+    lines = [l for l in SENTENCE_SPLIT.split(text) if l]
     return (
         len(lines) == 3
         and syllables(dct, lines[0]) == 5
@@ -138,7 +221,6 @@ def normalize_word(word, recurse=True):
         .strip("?")
         .strip("(")
         .strip(")")
-        .replace("&#X27;", "'")
     )
     if recurse and word.isdigit():
         try:
@@ -213,39 +295,85 @@ def load_dct():
 
     # dct["AT"] = [0]
     # dct["ITS"] = [0]
-    dct["OF"] = [0]
-    dct["TO"] = [0]
+    # dct["OF"] = [0]
+    # dct["TO"] = [0]
     return dct
 
 
-def mainloop(dct):
+TOTAL_ROWS = 31499723
+SHORT_ROWS = 1000000
+PROGRESS_COUNTER = 100_000
+
+
+def mainloop(dct, should_print, short):
     # from https://www.kaggle.com/datasets/nickalt/hacker-news
     # docs: https://github.com/HackerNews/API?tab=readme-ov-file
     with open(Path.home() / "Downloads" / "hn2023.csv") as f:
         reader = csv.DictReader(f)
         n = 0
+
+        nrows = SHORT_ROWS if short else TOTAL_ROWS
+        start_time = time.time_ns()
+        printed_progress = False
         for i, row in enumerate(reader, start=1):
-            if i % 100_000 == 0:
-                print(i)
+            if i % PROGRESS_COUNTER == 0:
+                eprint(f"*** progress: {i / nrows:.1%}")
+
+                if not printed_progress:
+                    now = time.time_ns()
+                    millis_per_row = ((now - start_time) / 1_000_000) / PROGRESS_COUNTER
+                    estimated_time = (
+                        millis_per_row * (nrows - PROGRESS_COUNTER)
+                    ) / 1000.0
+                    eprint(f"*** estimated time: {estimated_time:.1f}s")
+                    eprint(f"*** per row: {millis_per_row:.3f} ms")
+
+                printed_progress = True
 
             if look_for_poem(dct, row):
-                print("--- poem ---")
-                print(f"by {row['by']}")
-                print(f"https://news.ycombinator.com/item?id={row['id']}")
-                print()
-                print(row["text"])
-                print()
-                print("--- /poem ---")
+                if should_print:
+                    print("--- poem ---")
+                    print(f"by {row['by']}")
+                    print(f"https://news.ycombinator.com/item?id={row['id']}")
+                    print()
+                    print(row["text"].replace("&#x27;", "'"))
+                    print()
+                    print("--- /poem ---")
                 n += 1
 
-            if i == 1_000_000:
+            if short and i == SHORT_ROWS:
                 break
 
-        print(f"Found {n}")
-        print(f"Failed to scan {nfailed} ({nfailed / ntotal:.1%})")
+        end_time = time.time_ns()
+
+        nanos_elapsed = end_time - start_time
+        millis_elapsed = nanos_elapsed / 1_000_000.0
+        secs_elapsed = millis_elapsed / 1000.0
+
+        eprint()
+        eprint(f"Elapsed: {secs_elapsed:.1f}s")
+        eprint(f"Per row: {millis_elapsed / nrows:.3f} ms")
+        eprint()
+        eprint(f"Found {n}")
+        eprint(f"Failed to scan {nfailed} ({nfailed / ntotal:.1%})")
 
 
-dct = load_dct()
-mainloop(dct)
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--print", action="store_true")
+    p.add_argument("--short", action="store_true")
+    args = p.parse_args()
+
+    dct = load_dct()
+
+    try:
+        mainloop(dct, args.print, args.short)
+    except KeyboardInterrupt:
+        print()
+        sys.exit(1)
 
 # extract_comments()
