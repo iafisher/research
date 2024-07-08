@@ -52,7 +52,11 @@ class Layout:
 
 
 def n_random_bits(n):
-    return "".join(str(random.randint(0, 1)) for _ in range(n))
+    return "".join(n_random_bits_list(n))
+
+
+def n_random_bits_list(n):
+    return [str(random.randint(0, 1)) for _ in range(n)]
 
 
 def random_line():
@@ -155,6 +159,90 @@ def _split_number(n):
     return a, b
 
 
-print(random_slide())
+class Lines:
+    def __init__(self, *lines, stagger=0):
+        self.lines = lines
+        self.stagger = stagger
+
+    def to_lines(self):
+        if self.stagger:
+            r = []
+            offset = 0
+            for line in self.lines:
+                r.append(("\0" * offset) + line)
+                offset += len(line) + self.stagger
+            return r
+        else:
+            return self.lines[:]
+
+
+class SlideBuilder:
+    def __init__(self, *, height=GOOGLE_SLIDES_HEIGHT, width=GOOGLE_SLIDES_WIDTH):
+        self.height = height
+        self.width = width
+        self.content_by_line = [[] for _ in range(self.height)]
+
+    def place(self, element, *, h, v):
+        element_lines = element if isinstance(element, list) else [element]
+        h = self._normalize_h(h, element_lines)
+        v = self._normalize_v(v, element_lines)
+
+        v_offset = v
+        for line in element_lines:
+            self.content_by_line[v_offset].append((h, line))
+            v_offset += 1
+
+        return self
+
+    def _normalize_h(self, h, element_lines):
+        if h == "center":
+            width = max(map(len, element_lines))
+            h, _ = _split_number(self.width - width)
+        else:
+            assert isinstance(h, int)
+            if h < 0:
+                h = self.width + (h - 1)
+
+        return h
+
+    def _normalize_v(self, v, element_lines):
+        if v == "center":
+            height = len(element_lines)
+            v, _ = _split_number(self.height - height)
+        else:
+            assert isinstance(v, int)
+            if v < 0:
+                v = self.height + (v - 1)
+
+        return v
+
+    def build(self):
+        r = [n_random_bits_list(self.width) for _ in range(self.height)]
+        for lineno, content_list in enumerate(self.content_by_line):
+            for offset, content in content_list:
+                self._paste_content(r[lineno], offset, content)
+
+        return " ".join("".join(l) for l in r)
+
+    def _paste_content(self, buffer, offset, content):
+        for i in range(len(content)):
+            if content[i] == "\0":
+                continue
+
+            buffer[offset + i] = content[i]
+
+
+def stagger(sb, *lines, h, v, gap=1):
+    r = []
+    offset = 0
+    for line in lines:
+        r.append(("\0" * offset) + line)
+        offset += len(line) + gap
+    sb.place(r, h=h, v=v)
+
+
+sb = SlideBuilder()
+stagger(sb, " HACKER ", " NEWS ", " POETRY ", h="center", v="center")
+sb.place(" iafisher, jul 2024 ", h=3, v=-1)
+print(sb.build())
 print()
-print(random_text_slide(["hacker", "news", "poetry"], layout=Layout.title()))
