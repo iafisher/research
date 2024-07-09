@@ -183,7 +183,7 @@ class SlideBuilder:
         self.content_by_line = [[] for _ in range(self.height)]
 
     def place(self, element, *, h, v):
-        element_lines = element if isinstance(element, list) else [element]
+        element_lines = [element] if isinstance(element, str) else element
         h = self._normalize_h(h, element_lines)
         v = self._normalize_v(v, element_lines)
 
@@ -241,8 +241,89 @@ def stagger(sb, *lines, h, v, gap=1):
     sb.place(r, h=h, v=v)
 
 
+def centered_box(sb, *lines, gap=1):
+    max_width = max(map(len, lines))
+    r = []
+    for i, line in enumerate(lines):
+        if i != 0:
+            for _ in range(gap):
+                r.append("\0" * max_width)
+        r.append(line.center(max_width, "\0"))
+    sb.place(r, h="center", v="center")
+
+
+def poem(*lines, title):
+    for i in range(len(lines)):
+        x = []
+        for j, line in enumerate(lines):
+            if j <= i:
+                x.append(line)
+            else:
+                x.append("\0" * len(line))
+
+        sb = SlideBuilder()
+        sb.place(x, h="center", v="center")
+        sb.place(title, h=3, v=1)
+        print()
+        print(sb.build())
+
+
+# sb = SlideBuilder()
+# stagger(sb, " HACKER ", " NEWS ", " POETRY ", h="center", v="center")
+# sb.place(" iafisher, jul 2024 ", h=3, v=-1)
+# print(sb.build())
+
 sb = SlideBuilder()
-stagger(sb, " HACKER ", " NEWS ", " POETRY ", h="center", v="center")
-sb.place(" iafisher, jul 2024 ", h=3, v=-1)
-print(sb.build())
+sb.place("", h="center", v="center")
+centered_box(
+    sb,
+    ' "found poetry" from real hacker news comments ',
+    " discovered through computational analysis ",
+)
 print()
+print(sb.build())
+
+# poem(
+#     " Unix is OK. ",
+#     " That article is bullshit, ",
+#     " in my opinion. ",
+#     title=' "Opinion" by faragon ',
+# )
+
+# poem(
+#     " Give me a dumb car. ",
+#     " The software is not ready. ",
+#     " Get them off the road. ",
+#     title=' "Dumb" by pishpash ',
+# )
+
+# poem(
+#     " Middle ground is still asymmetric. ",
+#     " You know what they know about you, ",
+#     " but you still know nothing ",
+#     " about them. ",
+#     " Your privacy is invaded, but theirs remains ",
+#     " intact. ",
+#     title=' "Intact" by rbanffy ',
+# )
+
+# sb = SlideBuilder()
+# sb.place(" how I did it ", v=1, h=3)
+# sb.place(" - HN comments data set from Kaggle (30 mil) ", v=4, h=5)
+# sb.place(" - used CMU dict to search for metrical patterns ", v=6, h=5)
+# sb.place(" - easy enough to find haikus ", v=8, h=5)
+# sb.place(" - for longer poems, trial and error... ", v=10, h=5)
+# sb.place(" - ...and lots of manual inspection ", v=12, h=5)
+# print()
+# print(sb.build())
+
+# sb = SlideBuilder()
+# sb.place(" outsiderart.substack.com ", h="center", v="center")
+# print()
+# print(sb.build())
+
+# print()
+# print(SlideBuilder().build())
+
+print()
+print(SlideBuilder().build())
