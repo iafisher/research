@@ -1,0 +1,33 @@
+body {
+    font-family: monospace;
+    max-width: 42rem;
+    margin: 0 auto;
+    margin-top: 10px;
+}
+
+.cipher {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+label input {
+    margin-left: 5px;
+    width: 1em;
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.encrypted-text {
+    text-align: center;
+    font-size: 1.1rem;
+    margin-top: 20px;
+}
+
+.encrypted-text .encrypted {
+    opacity: 25%;
+}
+
+.encrypted-text .hinted {
+    color: red;
+}
