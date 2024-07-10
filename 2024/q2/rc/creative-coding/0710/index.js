@@ -11,15 +11,10 @@ function encrypt(text, cipher) {
     let r = [];
     for (const letter of text.toUpperCase()) {
         const t = cipher.get(letter);
-        if (t && t !== "") {
-            r.push({ letter: t, decrypted: true, hinted: false });
+        if (t) {
+            r.push({ letter: t.letter, decrypted: true, hinted: t.hinted });
         } else {
-            const t2 = HINTS.get(letter);
-            if (t2 && t2 !== "") {
-                r.push({ letter: t2, decrypted: true, hinted: true })
-            } else {
-                r.push({ letter, decrypted: false, hinted: false });
-            }
+            r.push({ letter, decrypted: false, hinted: false });
         }
     }
     return r;
@@ -46,14 +41,9 @@ function isLetter(str) {
 }
 
 function revealHint() {
-    // const choices = Array.from(ORIGINAL_CIPHER.entries());
-    // const index = Math.floor(Math.random() * choices.length);
-    // const [key, value] = choices[index];
-    // HINTS.set(value, key);
-
     const candidates = [];
     for (const [key, value] of USER_CIPHER.entries()) {
-        if (value === "" && Array.from(HINTS.values()).indexOf(key) === -1 && ENCRYPTED.indexOf(key) !== -1) {
+        if (value === null && ENCRYPTED.indexOf(key) !== -1) {
             candidates.push(key);
         }
     }
@@ -66,7 +56,7 @@ function revealHint() {
     const hint = candidates[index];
     for (const [key, value] of ORIGINAL_CIPHER.entries()) {
         if (key === hint) {
-            HINTS.set(value, key);
+            USER_CIPHER.set(value.letter, { letter: key, hinted: true });
             break;
         }
     }
@@ -74,10 +64,12 @@ function revealHint() {
 
 const CipherSettingsView = {
     view: function (vnode) {
+        const x = vnode.attrs.value;
         return m("label", [vnode.attrs.key, m("input", {
+            disabled: x ? x.hinted : false,
             onchange: function (event) {
-                USER_CIPHER.set(vnode.attrs.key, event.target.value.toUpperCase().trim());
-            }, value: vnode.attrs.value
+                USER_CIPHER.set(vnode.attrs.key, { letter: event.target.value.toUpperCase().trim(), hinted: false });
+            }, value: x ? x.letter : ""
         })]);
     }
 };
@@ -129,11 +121,11 @@ const LetterView = {
         let r = "";
         for (const letter of vnode.attrs.letters) {
             const x = USER_CIPHER.get(letter);
-            if (x === "") {
+            if (!x) {
                 r = "";
                 break;
             } else {
-                r += x;
+                r += x.letter;
             }
         }
 
@@ -170,8 +162,6 @@ const ButtonsView = {
 
 const RootView = {
     view: function () {
-        console.log(ORIGINAL_CIPHER);
-        console.log(USER_CIPHER);
         return m("div", [m(CipherSettingsBoxView), m(EncryptedView), m(StatsView), m(ButtonsView)]);
     }
 };
@@ -184,8 +174,8 @@ const USER_CIPHER = new Map();
 const shuffledLetters = Array.from(LETTERS);
 shuffleArray(shuffledLetters);
 for (let i = 0; i < LETTERS.length; i++) {
-    ORIGINAL_CIPHER.set(LETTERS[i], shuffledLetters[i]);
-    USER_CIPHER.set(LETTERS[i], "");
+    ORIGINAL_CIPHER.set(LETTERS[i], {letter: shuffledLetters[i], hinted: false});
+    USER_CIPHER.set(LETTERS[i], null);
 }
 const ENCRYPTED = encryptString(TEXT, ORIGINAL_CIPHER);
 m.mount(document.body, RootView);
