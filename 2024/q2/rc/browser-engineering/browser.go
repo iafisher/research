@@ -8,9 +8,15 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
+
+type GenericResponse interface {
+	Show()
+}
 
 type HttpResponse struct {
 	Version           string
@@ -20,26 +26,74 @@ type HttpResponse struct {
 	Content           string
 }
 
-type Url struct {
-	Scheme string
-	Host   string
-	Port   int
-	Path   string
+func (response *HttpResponse) Show() {
+	printHtml(response.Content)
 }
 
-func (url Url) Request() (HttpResponse, error) {
+type FileResponse struct {
+	Content string
+}
+
+func (response *FileResponse) Show() {
+	fmt.Println(response.Content)
+}
+
+type DataResponse struct {
+	Content  string
+	MimeType MimeType
+}
+
+func (response *DataResponse) Show() {
+	if response.MimeType.Type == "text" {
+		fmt.Println(response.Content)
+	} else {
+		fmt.Println("<unknown MIME type for 'data:' URL>")
+	}
+
+}
+
+type Url struct {
+	Scheme   string
+	Host     string
+	Port     int
+	Path     string
+	MimeType MimeType // only for 'data:' URLs
+}
+
+type MimeType struct {
+	Type           string
+	Subtype        string
+	ParameterName  string
+	ParameterValue string
+}
+
+func (url Url) Request() (GenericResponse, error) {
+	if url.Scheme == "http" || url.Scheme == "https" {
+		return url.requestHttp()
+	} else if url.Scheme == "file" {
+		return url.requestFile()
+	} else if url.Scheme == "data" {
+		return url.requestData(), nil
+	} else {
+		// should be impossible
+		panic("unrecognized scheme in url.Request()")
+	}
+}
+
+func (url Url) requestHttp() (*HttpResponse, error) {
 	var conn net.Conn
 	var err error
-	hostPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
-	if url.Scheme == "http" {
-		conn, err = net.Dial("tcp", hostPort)
-	} else if url.Scheme == "https" {
-		conn, err = tls.Dial("tcp", hostPort, &tls.Config{})
+	hostAndPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
+	if url.Scheme == "https" {
+		conn, err = tls.Dial("tcp", hostAndPort, &tls.Config{})
+	} else if url.Scheme == "http" {
+		conn, err = net.Dial("tcp", hostAndPort)
 	} else {
-		return HttpResponse{}, errors.New("unknown URL scheme")
+		// should be impossible
+		panic("unrecognized scheme in url.requestHttp()")
 	}
 	if err != nil {
-		return HttpResponse{}, err
+		return nil, err
 	}
 	defer conn.Close()
 
@@ -60,7 +114,7 @@ func (url Url) Request() (HttpResponse, error) {
 
 	statusLine, err := readHttpLine(reader)
 	if err != nil {
-		return HttpResponse{}, err
+		return nil, err
 	}
 	statusParts := strings.SplitN(statusLine, " ", 3)
 	version := statusParts[0]
@@ -71,7 +125,7 @@ func (url Url) Request() (HttpResponse, error) {
 	for {
 		line, err := readHttpLine(reader)
 		if err != nil {
-			return HttpResponse{}, err
+			return nil, err
 		}
 
 		if line == "" {
@@ -88,22 +142,22 @@ func (url Url) Request() (HttpResponse, error) {
 	// TODO: handle this case
 	_, ok := responseHeaders["transfer-encoding"]
 	if ok {
-		return HttpResponse{}, errors.New("transfer-encoding header not supported")
+		return nil, errors.New("transfer-encoding header not supported")
 	}
 
 	// TODO: handle this case
 	_, ok = responseHeaders["content-encoding"]
 	if ok {
-		return HttpResponse{}, errors.New("content-encoding header not supported")
+		return nil, errors.New("content-encoding header not supported")
 	}
 
 	// TODO: use Content-Length header if present
 	content, err := readToEnd(reader)
 	if err != nil {
-		return HttpResponse{}, err
+		return nil, err
 	}
 
-	return HttpResponse{
+	return &HttpResponse{
 		Version:           version,
 		Status:            status,
 		StatusExplanation: statusExplanation,
@@ -111,6 +165,18 @@ func (url Url) Request() (HttpResponse, error) {
 		// TODO: read charset from Content-Type header
 		Content: string(content),
 	}, nil
+}
+
+func (url Url) requestFile() (*FileResponse, error) {
+	data, err := os.ReadFile(url.Path)
+	if err != nil {
+		return nil, err
+	}
+	return &FileResponse{Content: string(data)}, nil
+}
+
+func (url Url) requestData() *DataResponse {
+	return &DataResponse{Content: url.Path, MimeType: url.MimeType}
 }
 
 func (url Url) PortOrDefault() int {
@@ -164,13 +230,22 @@ func readToEnd(reader *bufio.Reader) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
+func checkUrlScheme(scheme string) bool {
+	// if you had a new scheme here, you must update url.Request()
+	return scheme == "http" || scheme == "https" || scheme == "file" || scheme == "data"
+}
+
 func parseUrl(text string) (Url, error) {
+	if strings.HasPrefix(text, "data:") {
+		return parseDataUrl(text)
+	}
+
 	parts := strings.SplitN(text, "://", 2)
 	scheme := strings.ToLower(parts[0])
 	rest := parts[1]
 
-	if scheme != "http" && scheme != "https" {
-		panic("only http and https are supported as URL scheme")
+	if !checkUrlScheme(scheme) {
+		return Url{}, fmt.Errorf("not a supported URL schema: %q", scheme)
 	}
 
 	var host string
@@ -196,6 +271,44 @@ func parseUrl(text string) (Url, error) {
 	}
 
 	return Url{Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path}, nil
+}
+
+func parseDataUrl(text string) (Url, error) {
+	rest := strings.TrimPrefix(text, "data:")
+
+	parts := strings.SplitN(rest, ",", 2)
+	if len(parts) != 2 {
+		return Url{}, errors.New("missing comma in 'data:' URL")
+	}
+
+	var mimeType MimeType
+	if parts[0] != "" {
+		var err error
+		mimeType, err = parseMimeType(parts[0])
+		if err != nil {
+			return Url{}, err
+		}
+	} else {
+		// MDN: "If omitted, defaults to text/plain;charset=US-ASCII"
+		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs
+		mimeType = MimeType{Type: "text", Subtype: "plain", ParameterName: "charset", ParameterValue: "US-ASCII"}
+	}
+
+	// TODO: support full 'data:' URL specification
+	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs
+	return Url{Scheme: "data", Host: "", Port: 0, Path: parts[1], MimeType: mimeType}, nil
+}
+
+func parseMimeType(text string) (MimeType, error) {
+	// TODO: should only compile this regex once
+	chpat := "[A-Za-z0-9-]"
+	pat := regexp.MustCompile(fmt.Sprintf("^(%[1]s+)/(%[1]s+)(;(%[1]s+)=(%[1]s+))?$", chpat))
+	matches := pat.FindStringSubmatch(text)
+	if matches == nil {
+		return MimeType{}, fmt.Errorf("invalid MIME type: %q", text)
+	}
+
+	return MimeType{Type: matches[1], Subtype: matches[2], ParameterName: matches[4], ParameterValue: matches[5]}, nil
 }
 
 func printHtml(content string) {
@@ -236,7 +349,6 @@ func mainOrErr(urlString string) error {
 		return err
 	}
 
-	// fmt.Printf("%+v\n", response)
-	printHtml(response.Content)
+	response.Show()
 	return nil
 }
