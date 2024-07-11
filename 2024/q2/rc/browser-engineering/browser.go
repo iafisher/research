@@ -43,7 +43,19 @@ func (url Url) Request() (HttpResponse, error) {
 	}
 	defer conn.Close()
 
-	fmt.Fprintf(conn, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", url.Path, url.Host)
+	var requestHeaders = map[string]string{
+		"Host":       url.Host,
+		"Connection": "close",
+		"User-Agent": "Mozilla/5.0 (desktop; rv:0.1) RCWeb/0.1",
+	}
+
+	fmt.Fprintf(conn, "GET %s HTTP/1.1\r\n", url.Path)
+
+	for key, value := range requestHeaders {
+		fmt.Fprintf(conn, "%s: %s\r\n", key, value)
+	}
+	fmt.Fprintf(conn, "\r\n")
+
 	reader := bufio.NewReader(conn)
 
 	statusLine, err := readHttpLine(reader)
