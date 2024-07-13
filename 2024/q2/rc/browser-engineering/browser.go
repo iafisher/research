@@ -81,47 +81,82 @@ type MimeType struct {
 	ParameterValue string
 }
 
-func (url Url) Request() (GenericResponse, error) {
-	if url.Scheme == "http" {
-		return url.requestHttp()
-	} else if url.Scheme == "https" {
-		return url.requestHttps()
+type UrlFetcher struct {
+	connCache map[string]net.Conn
+}
+
+func NewUrlFetcher() UrlFetcher {
+	return UrlFetcher{connCache: make(map[string]net.Conn)}
+}
+
+func (fetcher *UrlFetcher) Fetch(url Url) (GenericResponse, error) {
+	if url.Scheme == "http" || url.Scheme == "https" {
+		return fetcher.fetchHttpGeneric(url)
 	} else if url.Scheme == "file" {
-		return url.requestFile()
+		return fetcher.fetchFile(url)
 	} else if url.Scheme == "data" {
-		return url.requestData(), nil
+		return fetcher.fetchData(url), nil
 	} else {
 		// should be impossible
 		panic("unrecognized scheme in url.Request()")
 	}
 }
 
-func (url Url) requestHttp() (*HttpResponse, error) {
-	hostAndPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
-	conn, err := net.Dial("tcp", hostAndPort)
+func (fetcher *UrlFetcher) Cleanup() {
+	for k, conn := range fetcher.connCache {
+		conn.Close()
+		delete(fetcher.connCache, k)
+	}
+}
+
+func (fetcher *UrlFetcher) openConnection(address string, isTls bool) (net.Conn, error) {
+	existingConn, ok := fetcher.connCache[address]
+	if ok {
+		printVerbose(fmt.Sprintf("using cached connection to %s", address))
+		return existingConn, nil
+	}
+
+	var conn net.Conn
+	var err error
+	if isTls {
+		printVerbose(fmt.Sprintf("opening TLS connection to %s", address))
+		conn, err = tls.Dial("tcp", address, &tls.Config{})
+	} else {
+		printVerbose(fmt.Sprintf("opening TCP connection to %s", address))
+		conn, err = net.Dial("tcp", address)
+	}
+
 	if err != nil {
 		return nil, err
 	}
-	return url.requestHttpGeneric(conn)
+
+	fetcher.connCache[address] = conn
+	return conn, nil
 }
 
-func (url Url) requestHttps() (*HttpResponse, error) {
-	hostAndPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
-	conn, err := tls.Dial("tcp", hostAndPort, &tls.Config{})
+func (fetcher *UrlFetcher) uncache(address string) {
+	delete(fetcher.connCache, address)
+}
+
+func (fetcher *UrlFetcher) fetchHttpGeneric(url Url) (*HttpResponse, error) {
+	address := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
+	isTls := url.Scheme == "https"
+	conn, err := fetcher.openConnection(address, isTls)
 	if err != nil {
 		return nil, err
 	}
-	return url.requestHttpGeneric(conn)
-}
 
-func (url Url) requestHttpGeneric(conn net.Conn) (*HttpResponse, error) {
 	var requestHeaders = map[string]string{
 		"Host":       url.Host,
-		"Connection": "close",
-		"User-Agent": "Mozilla/5.0 (desktop; rv:0.1) RCWeb/0.1",
+		"Connection": "keep-alive",
+		"User-Agent": "Mozilla/5.0 (desktop; rv:0.1) TinCan/0.1",
 	}
 
-	fmt.Fprintf(conn, "GET %s HTTP/1.1\r\n", url.Path)
+	requestLine := fmt.Sprintf("GET %s HTTP/1.1\r\n", url.Path)
+	_, err = fmt.Fprint(conn, requestLine)
+	if err != nil {
+		return nil, err
+	}
 
 	for key, value := range requestHeaders {
 		fmt.Fprintf(conn, "%s: %s\r\n", key, value)
@@ -138,6 +173,12 @@ func (url Url) requestHttpGeneric(conn net.Conn) (*HttpResponse, error) {
 	version := statusParts[0]
 	status := statusParts[1]
 	statusExplanation := statusParts[2]
+
+	if version == "HTTP/1.0" {
+		// in particular, this is necessary because the Python test server only supports HTTP/1.0
+		printVerbose(fmt.Sprintf("connection using HTTP/1.0; removing from connection cache: %s", address))
+		fetcher.uncache(address)
+	}
 
 	responseHeaders := make(map[string]string)
 	for {
@@ -169,8 +210,18 @@ func (url Url) requestHttpGeneric(conn net.Conn) (*HttpResponse, error) {
 		return nil, errors.New("content-encoding header not supported")
 	}
 
-	// TODO: use Content-Length header if present
-	content, err := readToEnd(reader)
+	contentLengthStr, ok := responseHeaders["content-length"]
+	if !ok {
+		return nil, errors.New("content-length header is missing")
+	}
+
+	contentLength, err := strconv.Atoi(contentLengthStr)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse Content-Length as integer: %s", err.Error())
+	}
+
+	content := make([]byte, contentLength)
+	_, err = reader.Read(content)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +236,8 @@ func (url Url) requestHttpGeneric(conn net.Conn) (*HttpResponse, error) {
 	}, nil
 }
 
-func (url Url) requestFile() (*FileResponse, error) {
+func (fetcher *UrlFetcher) fetchFile(url Url) (*FileResponse, error) {
+	printVerbose(fmt.Sprintf("reading local file: %s", url.Path))
 	data, err := os.ReadFile(url.Path)
 	if err != nil {
 		return nil, err
@@ -193,7 +245,7 @@ func (url Url) requestFile() (*FileResponse, error) {
 	return &FileResponse{Content: string(data)}, nil
 }
 
-func (url Url) requestData() *DataResponse {
+func (fetcher *UrlFetcher) fetchData(url Url) *DataResponse {
 	return &DataResponse{Content: url.Path, MimeType: url.MimeType}
 }
 
@@ -228,26 +280,6 @@ func readHttpLine(reader *bufio.Reader) (string, error) {
 	return buffer.String(), nil
 }
 
-func readToEnd(reader *bufio.Reader) ([]byte, error) {
-	bufferSize := 4096
-
-	var buffer bytes.Buffer
-	for {
-		b := make([]byte, bufferSize)
-		n, err := reader.Read(b)
-		if err != nil {
-			return nil, err
-		}
-
-		buffer.Write(b[:n])
-		if n < bufferSize {
-			break
-		}
-	}
-
-	return buffer.Bytes(), nil
-}
-
 func checkUrlScheme(scheme string) bool {
 	// if you had a new scheme here, you must update url.Request()
 	return scheme == "http" || scheme == "https" || scheme == "file" || scheme == "data"
@@ -259,6 +291,9 @@ func parseUrl(text string) (Url, error) {
 	}
 
 	parts := strings.SplitN(text, "://", 2)
+	if len(parts) != 2 {
+		return Url{}, fmt.Errorf("invalid URL: expected '://'")
+	}
 	scheme := strings.ToLower(parts[0])
 	rest := parts[1]
 
@@ -399,34 +434,68 @@ func trimPrefix(s string, prefix string) (string, bool) {
 	}
 }
 
-func main() {
-	flag.Parse()
-	urlString := flag.Arg(0)
-	if urlString == "" {
-		panic("one command-line argument required")
-	}
+var CONFIG_VERBOSE bool
 
-	err := mainOrErr(urlString)
-	if err != nil {
-		panic(err)
+func printVerbose(msg string) {
+	if CONFIG_VERBOSE {
+		fmt.Printf("tincan: %s\n", msg)
 	}
 }
 
-func mainOrErr(urlString string) error {
+func main() {
+	var noPrint bool
+	flag.BoolVar(&CONFIG_VERBOSE, "verbose", false, "turn on verbose output")
+	flag.BoolVar(&noPrint, "no-print", false, "do not print responses")
+	flag.Parse()
+
+	argCount := len(flag.Args())
+	if argCount == 0 {
+		fmt.Fprintf(os.Stderr, "error: one command-line argument required\n")
+		os.Exit(1)
+	}
+
+	fetcher := NewUrlFetcher()
+	defer fetcher.Cleanup()
+
+	success := true
+	for _, urlString := range flag.Args() {
+		if argCount > 1 {
+			fmt.Printf("tincan: fetching URL %s\n\n", urlString)
+		}
+		err := fetchAndPrintOne(&fetcher, urlString, noPrint)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: could not fetch URL %s: %s\n", urlString, err.Error())
+			success = false
+		} else {
+			if argCount > 1 {
+				fmt.Printf("tincan: finished fetching URL %s\n\n", urlString)
+			}
+		}
+	}
+
+	if !success {
+		os.Exit(2)
+	}
+}
+
+func fetchAndPrintOne(fetcher *UrlFetcher, urlString string, noPrint bool) error {
 	url, err := parseUrl(urlString)
 	if err != nil {
 		return err
 	}
 
-	response, err := url.Request()
+	response, err := fetcher.Fetch(url)
 	if err != nil {
 		return err
 	}
 
-	if url.ViewSource {
-		fmt.Println(response.GetContent())
-	} else {
-		fmt.Println(response.GetTextContent())
+	if !noPrint {
+		if url.ViewSource {
+			fmt.Println(response.GetContent())
+		} else {
+			fmt.Println(response.GetTextContent())
+		}
 	}
+
 	return nil
 }

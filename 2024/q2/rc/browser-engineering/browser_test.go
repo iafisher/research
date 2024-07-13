@@ -70,7 +70,9 @@ func TestRequest(t *testing.T) {
 	url, err := parseUrl(fmt.Sprintf("http://localhost:%d/example.txt", testServer.Port))
 	assertNoErr(t, err)
 
-	r, err := url.Request()
+	fetcher := NewUrlFetcher()
+
+	r, err := fetcher.Fetch(url)
 	assertNoErr(t, err)
 
 	assertStrEqual(t, r.GetContent(), EXAMPLE_TXT_CONTENTS)
@@ -78,7 +80,7 @@ func TestRequest(t *testing.T) {
 	url, err = parseUrl(fmt.Sprintf("http://localhost:%d/example.html", testServer.Port))
 	assertNoErr(t, err)
 
-	r, err = url.Request()
+	r, err = fetcher.Fetch(url)
 	assertNoErr(t, err)
 
 	assertStrEqual(t, r.GetContent(), EXAMPLE_HTML_CONTENTS)
@@ -127,7 +129,7 @@ func (ts *TestServer) Cleanup(t *testing.T) {
 func assertNoErr(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
-		t.Errorf("unexpected error: %s", err.Error())
+		t.Fatalf("unexpected error: %s", err.Error())
 	}
 }
 
