@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestParseUrl(t *testing.T) {
 	url, err := parseUrl("http://example.com/index.html")
@@ -54,6 +61,67 @@ func TestParseMimeType(t *testing.T) {
 	assertStrEqual(t, mtype.Subtype, "plain")
 	assertStrEqual(t, mtype.ParameterName, "charset")
 	assertStrEqual(t, mtype.ParameterValue, "utf-8")
+}
+
+func TestRequest(t *testing.T) {
+	testServer := launchServer(t)
+	defer testServer.Cleanup(t)
+
+	url, err := parseUrl(fmt.Sprintf("http://localhost:%d/example.txt", testServer.Port))
+	assertNoErr(t, err)
+
+	r, err := url.Request()
+	assertNoErr(t, err)
+
+	assertStrEqual(t, r.GetContent(), EXAMPLE_TXT_CONTENTS)
+
+	url, err = parseUrl(fmt.Sprintf("http://localhost:%d/example.html", testServer.Port))
+	assertNoErr(t, err)
+
+	r, err = url.Request()
+	assertNoErr(t, err)
+
+	assertStrEqual(t, r.GetContent(), EXAMPLE_HTML_CONTENTS)
+	assertStrEqual(t, r.GetTextContent(), "Hello, world!")
+}
+
+type TestServer struct {
+	Tmpdir string
+	Port   int
+	cmd    *exec.Cmd
+}
+
+const TEST_SERVER_PORT = 8383
+const EXAMPLE_TXT_CONTENTS = "This is an example file.\n"
+const EXAMPLE_HTML_CONTENTS = "<html><body><p>Hello, world!</p></body></html>"
+
+func launchServer(t *testing.T) TestServer {
+	tmpdir, err := os.MkdirTemp("", "goserverfiles")
+	assertNoErr(t, err)
+
+	fname := filepath.Join(tmpdir, "example.txt")
+	err = os.WriteFile(fname, []byte(EXAMPLE_TXT_CONTENTS), 0666)
+	assertNoErr(t, err)
+
+	fname = filepath.Join(tmpdir, "example.html")
+	err = os.WriteFile(fname, []byte(EXAMPLE_HTML_CONTENTS), 0666)
+	assertNoErr(t, err)
+
+	port := TEST_SERVER_PORT
+	cmd := exec.Command("python3", "-m", "http.server", fmt.Sprintf("%d", port), "-d", tmpdir)
+	err = cmd.Start()
+	assertNoErr(t, err)
+
+	// TODO: try to hit server until get a response, instead of sleeping
+	time.Sleep(300 * time.Millisecond)
+	return TestServer{Tmpdir: tmpdir, Port: port, cmd: cmd}
+}
+
+func (ts *TestServer) Cleanup(t *testing.T) {
+	err := ts.cmd.Process.Kill()
+	assertNoErr(t, err)
+	err = os.RemoveAll(ts.Tmpdir)
+	assertNoErr(t, err)
 }
 
 func assertNoErr(t *testing.T, err error) {

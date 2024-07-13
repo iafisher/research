@@ -15,7 +15,8 @@ import (
 )
 
 type GenericResponse interface {
-	Show()
+	GetTextContent() string
+	GetContent() string
 }
 
 type HttpResponse struct {
@@ -26,16 +27,24 @@ type HttpResponse struct {
 	Content           string
 }
 
-func (response *HttpResponse) Show() {
-	printHtml(response.Content)
+func (response *HttpResponse) GetTextContent() string {
+	return htmlText(response.Content)
+}
+
+func (response *HttpResponse) GetContent() string {
+	return response.Content
 }
 
 type FileResponse struct {
 	Content string
 }
 
-func (response *FileResponse) Show() {
-	fmt.Println(response.Content)
+func (response *FileResponse) GetTextContent() string {
+	return response.Content
+}
+
+func (response *FileResponse) GetContent() string {
+	return response.Content
 }
 
 type DataResponse struct {
@@ -43,21 +52,26 @@ type DataResponse struct {
 	MimeType MimeType
 }
 
-func (response *DataResponse) Show() {
+func (response *DataResponse) GetTextContent() string {
 	if response.MimeType.Type == "text" {
-		fmt.Println(response.Content)
+		return htmlText(response.Content)
 	} else {
-		fmt.Println("<unknown MIME type for 'data:' URL>")
+		// TODO: how to handle unknown MIME type?
+		return response.Content
 	}
+}
 
+func (response *DataResponse) GetContent() string {
+	return response.Content
 }
 
 type Url struct {
-	Scheme   string
-	Host     string
-	Port     int
-	Path     string
-	MimeType MimeType // only for 'data:' URLs
+	Scheme     string
+	Host       string
+	Port       int
+	Path       string
+	MimeType   MimeType // only for 'data:' URLs
+	ViewSource bool
 }
 
 type MimeType struct {
@@ -68,8 +82,10 @@ type MimeType struct {
 }
 
 func (url Url) Request() (GenericResponse, error) {
-	if url.Scheme == "http" || url.Scheme == "https" {
+	if url.Scheme == "http" {
 		return url.requestHttp()
+	} else if url.Scheme == "https" {
+		return url.requestHttps()
 	} else if url.Scheme == "file" {
 		return url.requestFile()
 	} else if url.Scheme == "data" {
@@ -81,22 +97,24 @@ func (url Url) Request() (GenericResponse, error) {
 }
 
 func (url Url) requestHttp() (*HttpResponse, error) {
-	var conn net.Conn
-	var err error
 	hostAndPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
-	if url.Scheme == "https" {
-		conn, err = tls.Dial("tcp", hostAndPort, &tls.Config{})
-	} else if url.Scheme == "http" {
-		conn, err = net.Dial("tcp", hostAndPort)
-	} else {
-		// should be impossible
-		panic("unrecognized scheme in url.requestHttp()")
-	}
+	conn, err := net.Dial("tcp", hostAndPort)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	return url.requestHttpGeneric(conn)
+}
 
+func (url Url) requestHttps() (*HttpResponse, error) {
+	hostAndPort := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
+	conn, err := tls.Dial("tcp", hostAndPort, &tls.Config{})
+	if err != nil {
+		return nil, err
+	}
+	return url.requestHttpGeneric(conn)
+}
+
+func (url Url) requestHttpGeneric(conn net.Conn) (*HttpResponse, error) {
 	var requestHeaders = map[string]string{
 		"Host":       url.Host,
 		"Connection": "close",
@@ -244,6 +262,7 @@ func parseUrl(text string) (Url, error) {
 	scheme := strings.ToLower(parts[0])
 	rest := parts[1]
 
+	scheme, viewSource := trimPrefix(scheme, "view-source:")
 	if !checkUrlScheme(scheme) {
 		return Url{}, fmt.Errorf("not a supported URL schema: %q", scheme)
 	}
@@ -270,7 +289,7 @@ func parseUrl(text string) (Url, error) {
 		}
 	}
 
-	return Url{Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path}, nil
+	return Url{Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path, ViewSource: viewSource}, nil
 }
 
 func parseDataUrl(text string) (Url, error) {
@@ -311,18 +330,73 @@ func parseMimeType(text string) (MimeType, error) {
 	return MimeType{Type: matches[1], Subtype: matches[2], ParameterName: matches[4], ParameterValue: matches[5]}, nil
 }
 
-func printHtml(content string) {
+func htmlText(content string) string {
+	var b strings.Builder
+
 	inTag := false
-	for _, c := range content {
-		if c == '<' {
-			inTag = true
-		} else if c == '>' {
-			inTag = false
-		} else if !inTag {
-			fmt.Printf("%c", c)
+	reader := CharReader{Content: content}
+	for !reader.Done() {
+		c := reader.Next()
+
+		if !inTag {
+			if c == "<" {
+				inTag = true
+			} else if c == "&" {
+				code := readEntityRef(&reader)
+				if code == "lt" {
+					b.WriteString("<")
+				} else if code == "gt" {
+					b.WriteString(">")
+				}
+			} else {
+				b.WriteString(c)
+			}
+		} else {
+			if c == ">" {
+				inTag = false
+			}
 		}
 	}
-	fmt.Println()
+	return b.String()
+}
+
+func readEntityRef(reader *CharReader) string {
+	start := reader.Index
+	for !reader.Done() {
+		c := reader.Next()
+		if c == ";" {
+			return reader.Content[start : reader.Index-1]
+		}
+	}
+
+	return ""
+}
+
+type CharReader struct {
+	Content string
+	Index   int
+}
+
+func (cr *CharReader) Next() string {
+	if cr.Done() {
+		return ""
+	}
+
+	c := cr.Content[cr.Index : cr.Index+1]
+	cr.Index++
+	return c
+}
+
+func (cr *CharReader) Done() bool {
+	return cr.Index >= len(cr.Content)
+}
+
+func trimPrefix(s string, prefix string) (string, bool) {
+	if strings.HasPrefix(s, prefix) {
+		return strings.TrimPrefix(s, prefix), true
+	} else {
+		return s, false
+	}
 }
 
 func main() {
@@ -349,6 +423,10 @@ func mainOrErr(urlString string) error {
 		return err
 	}
 
-	response.Show()
+	if url.ViewSource {
+		fmt.Println(response.GetContent())
+	} else {
+		fmt.Println(response.GetTextContent())
+	}
 	return nil
 }
