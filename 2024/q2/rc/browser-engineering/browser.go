@@ -21,7 +21,7 @@ type GenericResponse interface {
 
 type HttpResponse struct {
 	Version           string
-	Status            string
+	Status            int
 	StatusExplanation string
 	Headers           map[string]string
 	Content           string
@@ -66,6 +66,7 @@ func (response *DataResponse) GetContent() string {
 }
 
 type Url struct {
+	Original   string
 	Scheme     string
 	Host       string
 	Port       int
@@ -139,13 +140,60 @@ func (fetcher *UrlFetcher) uncache(address string) {
 }
 
 func (fetcher *UrlFetcher) fetchHttpGeneric(url Url) (*HttpResponse, error) {
-	address := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
-	isTls := url.Scheme == "https"
-	conn, err := fetcher.openConnection(address, isTls)
-	if err != nil {
-		return nil, err
+	// TODO: make this configurable
+	redirectsRemaining := 5
+
+	for redirectsRemaining > 0 {
+		address := fmt.Sprintf("%s:%d", url.Host, url.PortOrDefault())
+		isTls := url.Scheme == "https"
+		conn, err := fetcher.openConnection(address, isTls)
+		if err != nil {
+			return nil, err
+		}
+
+		err = sendHttpRequest(url, conn)
+		if err != nil {
+			return nil, err
+		}
+
+		r, err := receiveHttpResponse(conn)
+		if err != nil {
+			return nil, err
+		}
+
+		if r.Version == "HTTP/1.0" {
+			// in particular, this is necessary because the Python test server only supports HTTP/1.0
+			printVerbose(fmt.Sprintf("connection using HTTP/1.0; removing from connection cache: %s", address))
+			fetcher.uncache(address)
+		}
+
+		if r.Status >= 300 && r.Status < 400 {
+			location, ok := r.Headers["location"]
+			if !ok {
+				return nil, fmt.Errorf("got HTTP %d response but no 'Location' header present: %s", r.Status, url.Original)
+			}
+
+			printVerbose(fmt.Sprintf("following redirect from %s to %s", url.Original, location))
+			if strings.HasPrefix(location, "/") {
+				url.Original = fmt.Sprintf("%s%s", address, location)
+				url.Path = location
+			} else {
+				url, err = parseUrl(location)
+				if err != nil {
+					return nil, fmt.Errorf("could not parse redirect URL (original=%q, redirect=%q): %s", url.Original, location, err.Error())
+				}
+			}
+
+			redirectsRemaining--
+		} else {
+			return r, nil
+		}
 	}
 
+	return nil, fmt.Errorf("max redirects exceeded for %s", url.Original)
+}
+
+func sendHttpRequest(url Url, conn net.Conn) error {
 	var requestHeaders = map[string]string{
 		"Host":       url.Host,
 		"Connection": "keep-alive",
@@ -153,16 +201,19 @@ func (fetcher *UrlFetcher) fetchHttpGeneric(url Url) (*HttpResponse, error) {
 	}
 
 	requestLine := fmt.Sprintf("GET %s HTTP/1.1\r\n", url.Path)
-	_, err = fmt.Fprint(conn, requestLine)
+	_, err := fmt.Fprint(conn, requestLine)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	for key, value := range requestHeaders {
 		fmt.Fprintf(conn, "%s: %s\r\n", key, value)
 	}
 	fmt.Fprintf(conn, "\r\n")
+	return nil
+}
 
+func receiveHttpResponse(conn net.Conn) (*HttpResponse, error) {
 	reader := bufio.NewReader(conn)
 
 	statusLine, err := readHttpLine(reader)
@@ -171,14 +222,12 @@ func (fetcher *UrlFetcher) fetchHttpGeneric(url Url) (*HttpResponse, error) {
 	}
 	statusParts := strings.SplitN(statusLine, " ", 3)
 	version := statusParts[0]
-	status := statusParts[1]
-	statusExplanation := statusParts[2]
-
-	if version == "HTTP/1.0" {
-		// in particular, this is necessary because the Python test server only supports HTTP/1.0
-		printVerbose(fmt.Sprintf("connection using HTTP/1.0; removing from connection cache: %s", address))
-		fetcher.uncache(address)
+	statusStr := statusParts[1]
+	status, err := strconv.Atoi(statusStr)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse HTTP status as integer: %s", err.Error())
 	}
+	statusExplanation := statusParts[2]
 
 	responseHeaders := make(map[string]string)
 	for {
@@ -324,7 +373,7 @@ func parseUrl(text string) (Url, error) {
 		}
 	}
 
-	return Url{Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path, ViewSource: viewSource}, nil
+	return Url{Original: text, Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path, ViewSource: viewSource}, nil
 }
 
 func parseDataUrl(text string) (Url, error) {
@@ -350,7 +399,7 @@ func parseDataUrl(text string) (Url, error) {
 
 	// TODO: support full 'data:' URL specification
 	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs
-	return Url{Scheme: "data", Host: "", Port: 0, Path: parts[1], MimeType: mimeType}, nil
+	return Url{Original: text, Scheme: "data", Host: "", Port: 0, Path: parts[1], MimeType: mimeType}, nil
 }
 
 func parseMimeType(text string) (MimeType, error) {
