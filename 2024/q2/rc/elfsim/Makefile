@@ -1,5 +1,5 @@
-CC ?= clang
-CPPC ?= clang++
+CC ?= gcc
+CPPC ?= g++
 CFLAGS = -Wall -Werror -std=c99
 CPPFLAGS = -Wall -Werror
 
