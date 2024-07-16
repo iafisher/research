@@ -26,6 +26,7 @@ private:
 struct ArmVirtualMachine {
     u8 registers[31];
     u8 ip;
+    Memory memory;
 };
 
 class Instruction {

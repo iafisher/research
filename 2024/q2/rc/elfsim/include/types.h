@@ -8,18 +8,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
-enum ELF_VERSION : u16
-{
-    ET_NONE = 0x00,
-    ET_REL = 0x01,
-    ET_EXEC = 0x02,
-    ET_DYN = 0x03,
-    ET_CORE = 0x04,
-    ET_LOOS = 0xFE00,
-    ET_HIOS = 0xFEF,
-    ET_LOPROC = 0xFF00,
-    ET_HIPROC = 0xFFF
-};
+
 
 enum ELF_ISA : u16
 {
