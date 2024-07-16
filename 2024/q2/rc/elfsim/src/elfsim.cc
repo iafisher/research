@@ -95,8 +95,9 @@ int main(int argc, char* argv[]) {
 
     std::string label = inst->label();
     if (!label.empty()) {
-      std::cout << "vm: op: " << label << std::endl;
+      std::cout << "vm: op: ";
     }
+    inst->print();
 
     inst->execute(vm);
 
@@ -104,7 +105,7 @@ int main(int argc, char* argv[]) {
       std::cout << "vm: infinite loop; exiting" << std::endl;
       break;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
   return 0;

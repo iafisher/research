@@ -1,6 +1,7 @@
 #ifndef __IAF_ARMVM_H__
 #define __IAF_ARMVM_H__
 
+#include <iostream>
 #include <map>
 #include <memory>
 
@@ -39,6 +40,7 @@ public:
 
     virtual void execute(ArmVirtualMachine& vm) = 0;
     virtual std::string label() = 0;
+    virtual void print() = 0;
 };
 
 class Location {
@@ -47,6 +49,7 @@ public:
 
     virtual u64 load(const ArmVirtualMachine& vm) = 0;
     virtual void store(ArmVirtualMachine& vm, u64 value) = 0;
+    virtual void print() = 0;
 };
 
 class RegisterLocation: public Location {
@@ -59,6 +62,10 @@ public:
 
     void store(ArmVirtualMachine& vm, u64 value) {
         vm.registers[index_] = value;
+    }
+
+    void print() {
+        std::cout << "x" << (int)index_;
     }
 
 private:
@@ -77,6 +84,10 @@ public:
         throw "attempted to store to a constant location";
     }
 
+    void print() {
+        std::cout << "#0x" << std::hex << value_ << std::dec;
+    }
+
 private:
     u64 value_;
 };
@@ -85,12 +96,18 @@ class NopInstruction: public Instruction {
 public:
     void execute(ArmVirtualMachine& vm);
     std::string label() { return "nop"; }
+    void print() {
+        std::cout << "nop" << std::endl;
+    }
 };
 
 class UnknownInstruction: public Instruction {
 public:
     void execute(ArmVirtualMachine& vm);
     std::string label() { return ""; }
+    void print() {
+        std::cout << "stupid" << std::endl;
+    }
 };
 
 class BinaryInstruction: public Instruction {
@@ -115,6 +132,15 @@ class AddInstruction: public TernaryInstruction {
 public:
     void execute(ArmVirtualMachine& vm);
     std::string label() { return "add"; }
+    void print() {
+        std::cout << "add ";
+        dest_->print();
+        std::cout << ", ";
+        left_->print();
+        std::cout << ", ";
+        right_->print();
+        std::cout << std::endl;
+    }
 };
 
 class MovInstruction: public BinaryInstruction {
@@ -124,6 +150,13 @@ public:
 
     void execute(ArmVirtualMachine& vm);
     std::string label() { return "mov"; }
+    void print() {
+        std::cout << "mov ";
+        dest_->print();
+        std::cout << ", ";
+        src_->print();
+        std::cout << std::endl;
+    }
 };
 
 std::unique_ptr<Instruction> decode_arm_inst(u32);
