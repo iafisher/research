@@ -108,14 +108,19 @@ std::unique_ptr<Instruction> decode_arm_inst(u32 bytes) {
     // b4 b3 b2 b1
     u8 b4 = bytes >> 24;
     u8 b3 = (bytes >> 16) & 0xFF;
-    // u8 b2 = (bytes >> 8) & 0xFF;
+    u8 b2 = (bytes >> 8) & 0xFF;
     u8 b1 = bytes & 0xFF;
 
     if (bytes == 0xd503201f) {
         return std::make_unique<NopInstruction>();
-    } else if (b4 == 0xd2 && (b3 & 0x80) == 0x80) {
-        std::unique_ptr<Location> dest = std::make_unique<RegisterLocation>(b1 & 0x1f);
+    } else if (b4 == 0xd2 && (b3 & 0b10000000) == 0b10000000) {
+        // TODO: ignoring shift
+        std::unique_ptr<Location> dest = std::make_unique<RegisterLocation>(b1 & 0b11111);
         std::unique_ptr<Location> src = std::make_unique<ConstantLocation>((bytes >> 5) & 0xFFFF);
+        return std::make_unique<MovInstruction>(std::move(dest), std::move(src));
+    } else if (b4 == 0xaa && (((b3 >> 6) & 0b11) == 0) && b2 == 0b11 && (b1 >> 5) == 0b111) {
+        std::unique_ptr<Location> dest = std::make_unique<RegisterLocation>(b1 & 0b11111);
+        std::unique_ptr<Location> src = std::make_unique<RegisterLocation>(b3 & 0b11111);
         return std::make_unique<MovInstruction>(std::move(dest), std::move(src));
     } else {
         // std::cout << "decode_arm: 0x" << std::hex << bytes << std::endl;
