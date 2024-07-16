@@ -42,13 +42,11 @@ public:
     }
 
     u8 r = bytes_[pos_];
-    std::cout << "reader: index " << std::hex << "0x" << pos_ << "  0x" << (int)r << std::dec << std::endl;
     pos_++;
     return r;
   }
 
   void skip(size_t n) {
-    std::cout << "reader: skip " << n << std::endl;
     setpos_(pos_ + n);
   }
 
@@ -57,15 +55,9 @@ public:
   }
 
   u16 next_u16() {
-    std::cout << "next_u16: start: " << std::hex << "0x" << pos_ << std::dec << std::endl;
     u16 b1 = next();
     u16 b2 = next();
-    std::cout << "next_u16: end: " << std::hex << "0x" << pos_ << std::dec << std::endl;
-    u16 r = b1 + (b2 << 8);
-    std::cout << "next_u16: b1: " << std::hex << "0x" << b1 << std::dec << std::endl;
-    std::cout << "next_u16: b2: " << std::hex << "0x" << b2 << std::dec << std::endl;
-    std::cout << "next_u16: result: " << std::hex << "0x" << r << std::dec << std::endl;
-    return r;
+    return b1 + (b2 << 8);
   }
 
   u32 next_u32() {
@@ -171,7 +163,6 @@ ELF parse_elf(ByteReader& reader) {
 
   b1 = reader.next();
   elf.target_abi = b1;
-  std::cout << "abi: " << (int)elf.target_abi << std::endl;
   if (elf.target_abi != ELF_ABI_SYSV && elf.target_abi != ELF_ABI_LINUX) {
     throw "non-Linux ABI not supported";
   }
@@ -185,14 +176,12 @@ ELF parse_elf(ByteReader& reader) {
   elf.object_type = reader.next_u16();
   elf.isa_type = reader.next_u16();
 
-  std::cout << "ISA type: " << elf.isa_type << std::endl;
   if (elf.isa_type != ARM64)
   {
     throw "non-ARM processor not supported";
   }
 
   u32 w1 = reader.next_u32();
-  std::cout << "EI_VERSION2: " << w1 << std::endl;
   if (w1 != 1) {
     throw "invalid ELF header: expected second EI_VERSION to be 1";
   }
@@ -206,13 +195,9 @@ ELF parse_elf(ByteReader& reader) {
   // skip header size
   reader.skip(2);
 
-  std::cout << "elf: program_header_entry_size" << std::endl;
   elf.program_header_entry_size = reader.next_u16();
-  std::cout << "elf: program_header_length" << std::endl;
   elf.program_header_length = reader.next_u16();
-  std::cout << "elf: section_header_entry_size" << std::endl;
   elf.section_header_entry_size = reader.next_u16();
-  std::cout << "elf: section_header_length" << std::endl;
   elf.section_header_length = reader.next_u16();
   elf.section_names_index = reader.next_u16();
 

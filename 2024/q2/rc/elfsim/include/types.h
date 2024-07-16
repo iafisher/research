@@ -1,5 +1,5 @@
-#ifndef __ELF_H__
-#define __ELF_H__
+#ifndef __IAF_TYPES_H__
+#define __IAF_TYPES_H__
 
 #include <cstdint>
 
@@ -94,4 +94,4 @@ enum ELF_ISA : u16
     LOONG_ARCH = 0x102,
 };
 
-#endif // __ELF_H__
+#endif // __IAF_TYPES_H__
