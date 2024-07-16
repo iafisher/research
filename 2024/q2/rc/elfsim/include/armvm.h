@@ -27,6 +27,10 @@ struct ArmVirtualMachine {
     u8 registers[31];
     u64 ip;
     Memory memory;
+
+    void next_ip() {
+        ip += 4;
+    }
 };
 
 class Instruction {
@@ -34,6 +38,7 @@ public:
     virtual ~Instruction() = default;
 
     virtual void execute(ArmVirtualMachine& vm) = 0;
+    virtual std::string label() = 0;
 };
 
 class Location {
@@ -76,9 +81,16 @@ private:
     u64 value_;
 };
 
+class NopInstruction: public Instruction {
+public:
+    void execute(ArmVirtualMachine& vm);
+    std::string label() { return "nop"; }
+};
+
 class UnknownInstruction: public Instruction {
 public:
     void execute(ArmVirtualMachine& vm);
+    std::string label() { return ""; }
 };
 
 class BinaryInstruction: public Instruction {
@@ -102,11 +114,16 @@ protected:
 class AddInstruction: public TernaryInstruction {
 public:
     void execute(ArmVirtualMachine& vm);
+    std::string label() { return "add"; }
 };
 
 class MovInstruction: public BinaryInstruction {
 public:
+    MovInstruction(std::unique_ptr<Location> dest, std::unique_ptr<Location> src):
+        BinaryInstruction(std::move(dest), std::move(src)) {}
+
     void execute(ArmVirtualMachine& vm);
+    std::string label() { return "mov"; }
 };
 
 std::unique_ptr<Instruction> decode_arm_inst(u32);

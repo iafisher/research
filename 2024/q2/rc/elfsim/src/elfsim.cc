@@ -1,7 +1,9 @@
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <thread>
 #include <vector>
 
 #include "armvm.h"
@@ -90,12 +92,19 @@ int main(int argc, char* argv[]) {
     }
 
     std::unique_ptr<Instruction> inst = decode_arm_inst(inst_bytes);
+
+    std::string label = inst->label();
+    if (!label.empty()) {
+      std::cout << "vm: op: " << label << std::endl;
+    }
+
     inst->execute(vm);
 
     if (vm.ip == prev_ip) {
       std::cout << "vm: infinite loop; exiting" << std::endl;
       break;
     }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 
   return 0;

@@ -50,6 +50,7 @@ u8 Memory::read_u8(u64 p) {
     u64 idx = ptr_index(p);
     auto it = mapping_.find(blk);
     if (it == mapping_.end()) {
+        std::cout << "mem: warning: reading uninitialized memory at 0x" << std::hex << p << std::dec << std::endl;
         return 0;
     } else {
         return mem_[it->second + idx];
@@ -59,7 +60,7 @@ u8 Memory::read_u8(u64 p) {
 u16 Memory::read_u16(u64 p) {
     u16 b1 = read_u8(p);
     u16 b2 = read_u8(p + 1);
-    return b1 + (b2 >> 8);
+    return b1 + (b2 << 8);
 }
 
 u32 Memory::read_u32(u64 p) {
@@ -67,7 +68,7 @@ u32 Memory::read_u32(u64 p) {
     u32 b2 = read_u8(p + 1);
     u32 b3 = read_u8(p + 2);
     u32 b4 = read_u8(p + 3);
-    return b1 + (b2 >> 8) + (b3 >> 16) + (b4 >> 24);
+    return b1 + (b2 << 8) + (b3 << 16) + (b4 << 24);
 }
 
 u64 Memory::read_u64(u64 p) {
@@ -79,26 +80,45 @@ u64 Memory::read_u64(u64 p) {
     u64 b6 = read_u8(p + 5);
     u64 b7 = read_u8(p + 6);
     u64 b8 = read_u8(p + 7);
-    return b1 + (b2 >> 8) + (b3 >> 16) + (b4 >> 24) + (b5 >> 32) + (b6 >> 40) + (b7 >> 48) + (b8 >> 56);
+    return b1 + (b2 << 8) + (b3 << 16) + (b4 << 24) + (b5 << 32) + (b6 << 40) + (b7 << 48) + (b8 << 56);
 }
 
 void AddInstruction::execute(ArmVirtualMachine& vm) {
     // TODO: handle overflow and set flags
     u64 result = left_->load(vm) + right_->load(vm);
     dest_->store(vm, result);
-    vm.ip++;
+    vm.next_ip();
 }
 
 void MovInstruction::execute(ArmVirtualMachine& vm) {
     dest_->store(vm, src_->load(vm));
-    vm.ip++;
+    vm.next_ip();
+}
+
+void NopInstruction::execute(ArmVirtualMachine& vm) {
+    vm.next_ip();
 }
 
 void UnknownInstruction::execute(ArmVirtualMachine& vm) {
     std::cout << "stupid" << std::endl;
-    vm.ip++;
+    vm.next_ip();
 }
 
 std::unique_ptr<Instruction> decode_arm_inst(u32 bytes) {
-    return std::make_unique<UnknownInstruction>();
+    // b4 b3 b2 b1
+    u8 b4 = bytes >> 24;
+    u8 b3 = (bytes >> 16) & 0xFF;
+    // u8 b2 = (bytes >> 8) & 0xFF;
+    u8 b1 = bytes & 0xFF;
+
+    if (bytes == 0xd503201f) {
+        return std::make_unique<NopInstruction>();
+    } else if (b4 == 0xd2 && (b3 & 0x80) == 0x80) {
+        std::unique_ptr<Location> dest = std::make_unique<RegisterLocation>(b1 & 0x1f);
+        std::unique_ptr<Location> src = std::make_unique<ConstantLocation>((bytes >> 5) & 0xFFFF);
+        return std::make_unique<MovInstruction>(std::move(dest), std::move(src));
+    } else {
+        // std::cout << "decode_arm: 0x" << std::hex << bytes << std::endl;
+        return std::make_unique<UnknownInstruction>();
+    }
 }
