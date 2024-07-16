@@ -1,7 +1,7 @@
 CC ?= gcc
 CPPC ?= g++
 CFLAGS = -Wall -Werror -std=c99
-CPPFLAGS = -Wall -Werror -std=c++14
+CPPFLAGS = -Wall -Werror -std=c++14 -Iinclude
 
 OUTDIR = out
 
@@ -10,12 +10,12 @@ $(shell mkdir -p $(OUTDIR) >/dev/null)
 
 all: $(OUTDIR)/example $(OUTDIR)/elfsim
 
-$(OUTDIR)/example: example.c
+$(OUTDIR)/example: src/example.c
 	$(CC) $(CFLAGS) -g -o $@ $<
 
 
-$(OUTDIR)/elfsim: elfsim.cc
-	$(CPPC) $(CPPFLAGS) -o $@ $<
+$(OUTDIR)/elfsim: src/*.cc
+	$(CPPC) $(CPPFLAGS) -o $@ $^
 
 
 .PHONY: clean
