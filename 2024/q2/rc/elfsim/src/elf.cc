@@ -1,9 +1,14 @@
 #include "elf.h"
 
+using namespace elf;
+
 const u8 ELF_ABI_SYSV = 0x00;
 const u8 ELF_ABI_LINUX = 0x03;
 
-ELF parse_elf(ByteReader& reader) {
+void parse_program_headers(File& elf, ByteReader& reader);
+void parse_section_headers(File& elf, ByteReader& reader);
+
+File elf::parse(ByteReader& reader) {
   u8 b1 = reader.next();
   u8 b2 = reader.next();
   u8 b3 = reader.next();
@@ -13,7 +18,7 @@ ELF parse_elf(ByteReader& reader) {
     throw "invalid ELF header: wrong magic number";
   }
 
-  ELF elf;
+  File elf;
 
   b1 = reader.next();
   if (b1 == 1) {
@@ -52,7 +57,7 @@ ELF parse_elf(ByteReader& reader) {
   // skip padding bytes
   reader.skip(7);
 
-  elf.object_type = (ElfObjectType)reader.next_u16();
+  elf.object_type = (ObjectType)reader.next_u16();
   elf.isa_type = reader.next_u16();
 
   if (elf.isa_type != ARM64)
@@ -66,8 +71,8 @@ ELF parse_elf(ByteReader& reader) {
   }
 
   elf.entrypoint = reader.next_u64();
-  elf.program_header = reader.next_u64();
-  elf.section_header = reader.next_u64();
+  elf.program_header_index = reader.next_u64();
+  elf.section_header_index = reader.next_u64();
 
   // skip flags
   reader.skip(4);
@@ -80,10 +85,49 @@ ELF parse_elf(ByteReader& reader) {
   elf.section_header_length = reader.next_u16();
   elf.section_names_index = reader.next_u16();
 
+  parse_program_headers(elf, reader);
+  parse_section_headers(elf, reader);
+
   return elf;
 }
 
-const char* object_type_to_str(u16 object_type) {
+void parse_program_headers(File& elf, ByteReader& reader) {
+    reader.jump_to(elf.program_header_index);
+    for (size_t i = 0; i < elf.program_header_length; i++) {
+        ProgramHeader hdr;
+        hdr.type = reader.next_u32();
+        // skip flags
+        reader.skip(4);
+        hdr.offset = reader.next_u64();
+        hdr.vaddr = reader.next_u64();
+        // skip paddr
+        reader.skip(8);
+        hdr.filesz = reader.next_u64();
+        hdr.memsz = reader.next_u64();
+        reader.skip(8);
+        elf.program_headers.push_back(hdr);
+    }
+}
+
+void parse_section_headers(File& elf, ByteReader& reader) {
+    reader.jump_to(elf.section_header_index);
+    for (size_t i = 0; i < elf.section_header_length; i++) {
+        SectionHeader hdr;
+        hdr.name_index = reader.next_u32();
+        hdr.type = reader.next_u32();
+        hdr.flags = reader.next_u64();
+        hdr.addr = reader.next_u64();
+        hdr.offset = reader.next_u64();
+        hdr.size = reader.next_u64();
+        hdr.link = reader.next_u32();
+        hdr.info = reader.next_u32();
+        hdr.addralign = reader.next_u64();
+        hdr.entsize = reader.next_u64();
+        elf.section_headers.push_back(hdr);
+    }
+}
+
+const char* elf::object_type_to_str(u16 object_type) {
   switch (object_type) {
     case ET_NONE:
       return "unknown";
@@ -106,4 +150,43 @@ const char* object_type_to_str(u16 object_type) {
     default:
       return "unknown";
   }
+}
+
+const char* elf::pheader_type_to_str(u16 header_type) {
+    switch (header_type) {
+    case 0x0:
+        return "PT_NULL";
+    case 0x1:
+        return "PT_LOAD";
+    case 0x2:
+        return "PT_DYNAMIC";
+    case 0x3:
+        return "PT_INTERP";
+    case 0x4:
+        return "PT_NOTE";
+    case 0x5:
+        return "PT_SHLIB";
+    case 0x6:
+        return "PT_PHDR";
+    case 0x7:
+        return "PT_TLS";
+    default:
+        return "unknown";
+    }
+}
+
+const char* elf::sheader_type_to_str(u16 header_type) {
+    switch (header_type) {
+    case 0x0:
+        return "SHT_NULL";
+    case 0x1:
+        return "SHT_PROGBITS";
+    case 0x2:
+        return "SHT_SYMTAB";
+    case 0x3:
+        return "SHT_STRTAB";
+    // TODO: more
+    default:
+        return "unknown";
+    }
 }

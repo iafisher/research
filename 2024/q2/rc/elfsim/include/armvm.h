@@ -25,12 +25,14 @@ private:
 
 struct ArmVirtualMachine {
     u8 registers[31];
-    u8 ip;
+    u64 ip;
     Memory memory;
 };
 
 class Instruction {
 public:
+    virtual ~Instruction() = default;
+
     virtual void execute(ArmVirtualMachine& vm) = 0;
 };
 
@@ -74,6 +76,11 @@ private:
     u64 value_;
 };
 
+class UnknownInstruction: public Instruction {
+public:
+    void execute(ArmVirtualMachine& vm);
+};
+
 class BinaryInstruction: public Instruction {
 public:
     BinaryInstruction(std::unique_ptr<Location> dest, std::unique_ptr<Location> src):
@@ -101,5 +108,7 @@ class MovInstruction: public BinaryInstruction {
 public:
     void execute(ArmVirtualMachine& vm);
 };
+
+std::unique_ptr<Instruction> decode_arm_inst(u32);
 
 #endif

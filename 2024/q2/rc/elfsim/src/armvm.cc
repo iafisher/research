@@ -1,3 +1,5 @@
+#include <iostream>
+
 #include "armvm.h"
 
 #define MEMORY_BLOCK_SIZE  4096
@@ -6,13 +8,15 @@
 
 void Memory::write_u8(u64 p, u8 v) {
     u64 blk = ptr_block(p);
-    u64 idx = ptr_block(p);
+    u64 idx = ptr_index(p);
     auto it = mapping_.find(blk);
     if (it == mapping_.end()) {
-        mapping_.insert({blk, (u64)mem_.size()});
+        u64 p = mem_.size();
+        mapping_.insert({blk, p});
         for (int i = 0; i < MEMORY_BLOCK_SIZE; i++) {
             mem_.push_back(0);
         }
+        mem_[p + idx] = v;
     } else {
         mem_[it->second + idx] = v;
     }
@@ -88,4 +92,13 @@ void AddInstruction::execute(ArmVirtualMachine& vm) {
 void MovInstruction::execute(ArmVirtualMachine& vm) {
     dest_->store(vm, src_->load(vm));
     vm.ip++;
+}
+
+void UnknownInstruction::execute(ArmVirtualMachine& vm) {
+    std::cout << "stupid" << std::endl;
+    vm.ip++;
+}
+
+std::unique_ptr<Instruction> decode_arm_inst(u32 bytes) {
+    return std::make_unique<UnknownInstruction>();
 }
