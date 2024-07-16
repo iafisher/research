@@ -1,7 +1,7 @@
 CC ?= gcc
 CPPC ?= g++
 CFLAGS = -Wall -Werror -std=c99
-CPPFLAGS = -Wall -Werror
+CPPFLAGS = -Wall -Werror -std=c++14
 
 OUTDIR = out
 
