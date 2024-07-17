@@ -4,16 +4,19 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
 
 type Gui struct {
-	Width  int32
-	Height int32
-	window *sdl.Window
-	font   *ttf.Font
+	Width       int32
+	Height      int32
+	Scroll      int32
+	displayList []DisplayListItem
+	window      *sdl.Window
+	font        *ttf.Font
 }
 
 func (gui *Gui) Init() error {
@@ -41,60 +44,89 @@ func (gui *Gui) Init() error {
 }
 
 func (gui *Gui) ShowTextPage(text string) error {
+	gui.displayList = Layout(text, gui.Width, gui.Height)
+	gui.Draw()
+
+	gui.window.UpdateSurface()
+	gui.eventLoop()
+	return nil
+}
+
+func (gui *Gui) Draw() error {
+	start := time.Now()
 	surface, err := gui.window.GetSurface()
 	if err != nil {
 		return err
 	}
 
-	text = stripNewlines(text)
-	var cursorX int32 = 0
-	var cursorY int32 = 0
-	for _, c := range text {
-		// TODO: why does this URL have so many null bytes?
-		// https://browser.engineering/examples/xiyouji.html
-		if c == 0 {
+	// clear the screen
+	surface.FillRect(nil, 0)
+
+	for _, item := range gui.displayList {
+		if gui.isOffscreen(item.Y) {
 			continue
 		}
 
-		renderedText, err := gui.font.RenderUTF8Blended(string(c), sdl.Color{R: 255, G: 255, B: 255, A: 255})
+		renderedText, err := gui.font.RenderUTF8Blended(item.C, sdl.Color{R: 255, G: 255, B: 255, A: 255})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "gui: warning: could not render character (code=%d): %s\n", c, err.Error())
+			fmt.Fprintf(os.Stderr, "gui: warning: could not render character (code=%d): %s\n", item.C[0], err.Error())
 			continue
 		}
 		defer renderedText.Free()
 
-		err = renderedText.Blit(nil, surface, &sdl.Rect{X: cursorX, Y: cursorY})
+		err = renderedText.Blit(nil, surface, &sdl.Rect{X: item.X, Y: item.Y - gui.Scroll})
 		if err != nil {
-			return err
-		}
-
-		cursorX += 15
-		if cursorX >= gui.Width {
-			cursorX = 0
-			cursorY += 18
-
-			if cursorY >= gui.Height {
-				fmt.Fprintln(os.Stderr, "gui: warning: fell off bottom of page")
-				break
-			}
+			fmt.Fprintf(os.Stderr, "gui: warning: could not blit rendered text at X=%d, Y=%d\n", item.X, item.Y)
+			continue
 		}
 	}
 
-	gui.window.UpdateSurface()
+	timeElapsed := time.Since(start)
+	PrintVerbose(fmt.Sprintf("gui: redraw time: %d ms", timeElapsed.Milliseconds()))
 
+	return nil
+}
+
+func (gui *Gui) isOffscreen(y int32) bool {
+	return y > gui.Scroll+gui.Height || y+VSTEP < gui.Scroll
+}
+
+const SCROLL_STEP int32 = 10
+
+func (gui *Gui) scrollDown() {
+	gui.Scroll += SCROLL_STEP
+	gui.Draw()
+}
+
+func (gui *Gui) scrollUp() {
+	gui.Scroll -= SCROLL_STEP
+	if gui.Scroll < 0 {
+		gui.Scroll = 0
+	}
+	gui.Draw()
+}
+
+func (gui *Gui) eventLoop() {
 	running := true
 	for running {
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
-			switch event.(type) {
+			switch t := event.(type) {
+			case *sdl.KeyboardEvent:
+				// fmt.Printf("gui: keyboard event: %+v\n", t)
+				// https://wiki.libsdl.org/SDL2/SDL_Scancode
+				if t.Keysym.Scancode == sdl.SCANCODE_DOWN {
+					gui.scrollDown()
+				} else if t.Keysym.Scancode == sdl.SCANCODE_UP {
+					gui.scrollUp()
+				}
 			case *sdl.QuitEvent:
 				running = false
-				break
+				return
 			}
 		}
+		gui.window.UpdateSurface()
 		sdl.Delay(33)
 	}
-
-	return nil
 }
 
 func stripNewlines(text string) string {
