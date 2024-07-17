@@ -13,6 +13,8 @@ type Gui struct {
 	Width       int32
 	Height      int32
 	Scroll      int32
+	text        string
+	raw         bool
 	displayList []DisplayListItem
 	window      *sdl.Window
 	font        *ttf.Font
@@ -35,7 +37,7 @@ func (gui *Gui) Init() error {
 		return err
 	}
 
-	gui.window, err = sdl.CreateWindow("TinCan", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, gui.Width, gui.Height, sdl.WINDOW_SHOWN)
+	gui.window, err = sdl.CreateWindow("TinCan", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, gui.Width, gui.Height, sdl.WINDOW_SHOWN|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		return err
 	}
@@ -44,7 +46,9 @@ func (gui *Gui) Init() error {
 
 // raw passed on to Layout()
 func (gui *Gui) ShowTextPage(text string, raw bool) error {
-	gui.displayList = Layout(text, raw, gui.Width, gui.Height)
+	gui.text = text
+	gui.raw = raw
+	gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
 	gui.Draw()
 
 	gui.window.UpdateSurface()
@@ -129,6 +133,13 @@ func (gui *Gui) eventLoop() {
 			case *sdl.QuitEvent:
 				running = false
 				return
+			case *sdl.WindowEvent:
+				if t.Event == sdl.WINDOWEVENT_RESIZED {
+					gui.Width = t.Data1
+					gui.Height = t.Data2
+					gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
+					gui.Draw()
+				}
 			}
 		}
 		gui.window.UpdateSurface()
