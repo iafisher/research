@@ -14,7 +14,6 @@ import (
 )
 
 type GenericResponse interface {
-	GetTextContent() string
 	GetContent() string
 }
 
@@ -26,20 +25,12 @@ type HttpResponse struct {
 	Content           string
 }
 
-func (response *HttpResponse) GetTextContent() string {
-	return htmlText(response.Content)
-}
-
 func (response *HttpResponse) GetContent() string {
 	return response.Content
 }
 
 type FileResponse struct {
 	Content string
-}
-
-func (response *FileResponse) GetTextContent() string {
-	return response.Content
 }
 
 func (response *FileResponse) GetContent() string {
@@ -49,15 +40,6 @@ func (response *FileResponse) GetContent() string {
 type DataResponse struct {
 	Content  string
 	MimeType MimeType
-}
-
-func (response *DataResponse) GetTextContent() string {
-	if response.MimeType.Type == "text" {
-		return htmlText(response.Content)
-	} else {
-		// TODO: how to handle unknown MIME type?
-		return response.Content
-	}
 }
 
 func (response *DataResponse) GetContent() string {

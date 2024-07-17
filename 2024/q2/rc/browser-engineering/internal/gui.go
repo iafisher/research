@@ -3,7 +3,6 @@ package internal
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/veandco/go-sdl2/sdl"
@@ -43,8 +42,9 @@ func (gui *Gui) Init() error {
 	return nil
 }
 
-func (gui *Gui) ShowTextPage(text string) error {
-	gui.displayList = Layout(text, gui.Width, gui.Height)
+// raw passed on to Layout()
+func (gui *Gui) ShowTextPage(text string, raw bool) error {
+	gui.displayList = Layout(text, raw, gui.Width, gui.Height)
 	gui.Draw()
 
 	gui.window.UpdateSurface()
@@ -91,7 +91,7 @@ func (gui *Gui) isOffscreen(y int32) bool {
 	return y > gui.Scroll+gui.Height || y+VSTEP < gui.Scroll
 }
 
-const SCROLL_STEP int32 = 10
+const SCROLL_STEP int32 = 50
 
 func (gui *Gui) scrollDown() {
 	gui.Scroll += SCROLL_STEP
@@ -127,10 +127,6 @@ func (gui *Gui) eventLoop() {
 		gui.window.UpdateSurface()
 		sdl.Delay(33)
 	}
-}
-
-func stripNewlines(text string) string {
-	return strings.ReplaceAll(text, "\n", " ")
 }
 
 func (gui *Gui) Cleanup() {

@@ -64,17 +64,9 @@ func fetchAndShowOne(fetcher *internal.UrlFetcher, gui *internal.Gui, urlString 
 		return err
 	}
 
-	var text string
-	if url.ViewSource {
-		text = response.GetContent()
-	} else {
-		text = response.GetTextContent()
-	}
-
-	fmt.Println(text)
-
 	if !noGui {
-		err = gui.ShowTextPage(text)
+		// TODO: not sure that data URLs are handled properly anymore
+		err = gui.ShowTextPage(response.GetContent(), url.ViewSource)
 		if err != nil {
 			return err
 		}
