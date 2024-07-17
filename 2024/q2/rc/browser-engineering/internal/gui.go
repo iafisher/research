@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/veandco/go-sdl2/img"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
 )
@@ -76,17 +77,12 @@ func (gui *Gui) Draw() error {
 			continue
 		}
 
-		renderedText, err := gui.font.RenderUTF8Blended(item.C, sdl.Color{R: 255, G: 255, B: 255, A: 255})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "gui: warning: could not render character (code=%d): %s\n", item.C[0], err.Error())
-			continue
-		}
-		defer renderedText.Free()
-
-		err = renderedText.Blit(nil, surface, &sdl.Rect{X: item.X, Y: item.Y - gui.Scroll})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "gui: warning: could not blit rendered text at X=%d, Y=%d\n", item.X, item.Y)
-			continue
+		x := item.X
+		y := item.Y - gui.Scroll
+		if item.EmojiCode != "" {
+			gui.drawEmoji(surface, x, y, item.EmojiCode)
+		} else {
+			gui.drawChar(surface, x, y, item.C)
 		}
 	}
 
@@ -94,6 +90,33 @@ func (gui *Gui) Draw() error {
 	PrintVerbose(fmt.Sprintf("gui: redraw time: %d ms", timeElapsed.Milliseconds()))
 
 	return nil
+}
+
+const EMOJI_PATH string = "assets/openmoji/"
+
+func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, emojiCode string) {
+	pngImage, err := img.Load(fmt.Sprintf("%s/%s.png", EMOJI_PATH, emojiCode))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gui: warning: could not load emoji (code=%s): %s\n", emojiCode, err)
+		return
+	}
+	defer pngImage.Free()
+
+	pngImage.BlitScaled(nil, surface, &sdl.Rect{X: x, Y: y, W: HSTEP, H: VSTEP})
+}
+
+func (gui *Gui) drawChar(surface *sdl.Surface, x int32, y int32, c string) {
+	renderedText, err := gui.font.RenderUTF8Blended(c, sdl.Color{R: 255, G: 255, B: 255, A: 255})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gui: warning: could not render character (code=%d): %s\n", c[0], err.Error())
+		return
+	}
+	defer renderedText.Free()
+
+	err = renderedText.Blit(nil, surface, &sdl.Rect{X: x, Y: y})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gui: warning: could not blit rendered text at X=%d, Y=%d\n", x, y)
+	}
 }
 
 func (gui *Gui) isOffscreen(y int32) bool {

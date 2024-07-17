@@ -2,6 +2,7 @@ package internal
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -23,4 +24,9 @@ func PrintVerbose(msg string) {
 
 func SetVerbose(v bool) {
 	CONFIG_VERBOSE = v
+}
+
+func DoesFileExist(filePath string) bool {
+	_, err := os.Stat(filePath)
+	return err == nil
 }

@@ -1,13 +1,15 @@
 package internal
 
 import (
+	"fmt"
 	"unicode/utf8"
 )
 
 type DisplayListItem struct {
-	X int32
-	Y int32
-	C string
+	X         int32
+	Y         int32
+	C         string
+	EmojiCode string
 }
 
 const HSTEP int32 = 15
@@ -25,23 +27,23 @@ func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 	reader := CharReader{Content: htmlText}
 
 	for !reader.Done() {
-		c := reader.Next()
+		runeValue := reader.Next()
 		if !raw {
 			if !inTag {
-				if c == "<" {
+				if runeValue == '<' {
 					inTag = true
 					startOfTag = reader.Index
 					continue
-				} else if c == "&" {
+				} else if runeValue == '&' {
 					code := readEntityRef(&reader)
 					if code == "lt" {
-						c = "<"
+						runeValue = '<'
 					} else if code == "gt" {
-						c = ">"
+						runeValue = '>'
 					}
 				}
 			} else {
-				if c == ">" {
+				if runeValue == '>' {
 					inTag = false
 					// TODO: doesn't work if element has attributes, e.g. `<p class="whatever'>`
 
@@ -54,13 +56,15 @@ func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 			}
 		}
 
-		if c == "\n" {
+		if runeValue == '\n' {
 			cursorX = 0
 			cursorY += VSTEP
 			continue
 		}
 
-		items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: c})
+		emojiCode := lookUpEmojiCode(runeValue)
+
+		items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: string(runeValue), EmojiCode: emojiCode})
 		if cursorY > maxY {
 			maxY = cursorY
 		}
@@ -75,11 +79,21 @@ func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 	return DisplayList{Items: items, MaxY: maxY + VSTEP}
 }
 
+func lookUpEmojiCode(runeValue rune) string {
+	emojiCode := fmt.Sprintf("%X", runeValue)
+	filePath := fmt.Sprintf("%s/%s.png", EMOJI_PATH, emojiCode)
+	if DoesFileExist(filePath) {
+		return emojiCode
+	} else {
+		return ""
+	}
+}
+
 func readEntityRef(reader *CharReader) string {
 	start := reader.Index
 	for !reader.Done() {
 		c := reader.Next()
-		if c == ";" {
+		if c == ';' {
 			return reader.Content[start : reader.Index-1]
 		}
 	}
@@ -92,15 +106,15 @@ type CharReader struct {
 	Index   int
 }
 
-func (cr *CharReader) Next() string {
+func (cr *CharReader) Next() rune {
 	if cr.Done() {
-		return ""
+		return 0
 	}
 
 	// TODO: probably very inefficient?
 	runeValue, width := utf8.DecodeRuneInString(cr.Content[cr.Index:])
 	cr.Index += width
-	return string(runeValue)
+	return runeValue
 }
 
 func (cr *CharReader) Done() bool {
