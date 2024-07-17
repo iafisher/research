@@ -14,8 +14,9 @@ const HSTEP int32 = 15
 const VSTEP int32 = 18
 
 // if raw is true then text is rendered as-is, not treated as HTML
-func Layout(htmlText string, raw bool, width int32, height int32) []DisplayListItem {
-	r := []DisplayListItem{}
+func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
+	items := []DisplayListItem{}
+	var maxY int32 = 0
 	var cursorX int32 = 0
 	var cursorY int32 = 0
 
@@ -59,7 +60,10 @@ func Layout(htmlText string, raw bool, width int32, height int32) []DisplayListI
 			continue
 		}
 
-		r = append(r, DisplayListItem{X: cursorX, Y: cursorY, C: c})
+		items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: c})
+		if cursorY > maxY {
+			maxY = cursorY
+		}
 
 		cursorX += HSTEP
 		if cursorX >= width {
@@ -68,7 +72,7 @@ func Layout(htmlText string, raw bool, width int32, height int32) []DisplayListI
 		}
 	}
 
-	return r
+	return DisplayList{Items: items, MaxY: maxY + VSTEP}
 }
 
 func readEntityRef(reader *CharReader) string {

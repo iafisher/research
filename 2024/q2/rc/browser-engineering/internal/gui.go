@@ -15,9 +15,14 @@ type Gui struct {
 	Scroll      int32
 	text        string
 	raw         bool
-	displayList []DisplayListItem
+	displayList DisplayList
 	window      *sdl.Window
 	font        *ttf.Font
+}
+
+type DisplayList struct {
+	Items []DisplayListItem
+	MaxY  int32
 }
 
 func (gui *Gui) Init() error {
@@ -66,7 +71,7 @@ func (gui *Gui) Draw() error {
 	// clear the screen
 	surface.FillRect(nil, 0)
 
-	for _, item := range gui.displayList {
+	for _, item := range gui.displayList.Items {
 		if gui.isOffscreen(item.Y) {
 			continue
 		}
@@ -97,8 +102,20 @@ func (gui *Gui) isOffscreen(y int32) bool {
 
 const SCROLL_STEP int32 = 50
 
+// pixels of padding past the last content that you can scroll to
+const BOTTOM_SCROLL_PADDING int32 = 10
+
 func (gui *Gui) scrollDown() {
+	maxY := gui.displayList.MaxY + BOTTOM_SCROLL_PADDING
+	if maxY < gui.Height {
+		return
+	}
+
 	gui.Scroll += SCROLL_STEP
+	bottomOfScreen := gui.Scroll + gui.Height
+	if bottomOfScreen > maxY {
+		gui.Scroll = maxY - gui.Height
+	}
 	gui.Draw()
 }
 
