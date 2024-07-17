@@ -61,6 +61,8 @@ func (fetcher *UrlFetcher) Fetch(url Url) (GenericResponse, error) {
 		return fetcher.fetchFile(url)
 	} else if url.Scheme == "data" {
 		return fetcher.fetchData(url), nil
+	} else if url.Scheme == "about" {
+		return fetcher.fetchAbout(url), nil
 	} else {
 		// should be impossible
 		panic("unrecognized scheme in url.Request()")
@@ -260,6 +262,11 @@ func (fetcher *UrlFetcher) fetchFile(url Url) (*FileResponse, error) {
 
 func (fetcher *UrlFetcher) fetchData(url Url) *DataResponse {
 	return &DataResponse{Content: url.Path, MimeType: url.MimeType}
+}
+
+func (fetcher *UrlFetcher) fetchAbout(url Url) *DataResponse {
+	// TODO: bad idea to reuse DataResponse type for `about:` URLs?
+	return &DataResponse{Content: ""}
 }
 
 func readHttpLine(reader *bufio.Reader) (string, error) {

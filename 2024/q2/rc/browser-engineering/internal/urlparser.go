@@ -43,16 +43,20 @@ func checkUrlScheme(scheme string) bool {
 }
 
 func ParseUrl(text string) (Url, error) {
-	if strings.HasPrefix(text, "data:") {
-		return parseDataUrl(text)
-	}
-
-	parts := strings.SplitN(text, "://", 2)
+	parts := strings.SplitN(text, ":", 2)
 	if len(parts) != 2 {
-		return Url{}, fmt.Errorf("invalid URL: expected '://'")
+		return Url{}, fmt.Errorf("invalid URL: expected colon")
 	}
 	scheme := strings.ToLower(parts[0])
 	rest := parts[1]
+
+	if scheme == "data" {
+		return parseDataUrl(rest)
+	} else if scheme == "about" {
+		return parseAboutUrl(rest)
+	}
+
+	rest = strings.TrimPrefix(rest, "//")
 
 	scheme, viewSource := trimPrefix(scheme, "view-source:")
 	if !checkUrlScheme(scheme) {
@@ -84,9 +88,7 @@ func ParseUrl(text string) (Url, error) {
 	return Url{Original: text, Scheme: scheme, Host: strings.ToLower(host), Port: port, Path: path, ViewSource: viewSource}, nil
 }
 
-func parseDataUrl(text string) (Url, error) {
-	rest := strings.TrimPrefix(text, "data:")
-
+func parseDataUrl(rest string) (Url, error) {
 	parts := strings.SplitN(rest, ",", 2)
 	if len(parts) != 2 {
 		return Url{}, errors.New("missing comma in 'data:' URL")
@@ -107,7 +109,15 @@ func parseDataUrl(text string) (Url, error) {
 
 	// TODO: support full 'data:' URL specification
 	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/Data_URLs
-	return Url{Original: text, Scheme: "data", Host: "", Port: 0, Path: parts[1], MimeType: mimeType}, nil
+	return Url{Original: fmt.Sprintf("data:%s", rest), Scheme: "data", Host: "", Port: 0, Path: parts[1], MimeType: mimeType}, nil
+}
+
+func parseAboutUrl(rest string) (Url, error) {
+	rest = strings.ToLower(rest)
+	if rest == "blank" {
+		return Url{Original: fmt.Sprintf("about:%s", rest), Scheme: "about", Host: "", Port: 0, Path: rest}, nil
+	}
+	return Url{}, errors.New("unknown `about:` scheme")
 }
 
 func parseMimeType(text string) (MimeType, error) {

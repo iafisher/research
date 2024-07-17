@@ -56,7 +56,8 @@ func main() {
 func fetchAndShowOne(fetcher *internal.UrlFetcher, gui *internal.Gui, urlString string, noGui bool) error {
 	url, err := internal.ParseUrl(urlString)
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "tincan: error parsing URL: %s\n", err.Error())
+		url = internal.Url{Scheme: "about", Path: "blank"}
 	}
 
 	response, err := fetcher.Fetch(url)

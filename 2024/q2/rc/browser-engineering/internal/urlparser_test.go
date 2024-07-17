@@ -40,6 +40,12 @@ func TestParseUrl(t *testing.T) {
 	assertStrEqual(t, url.Path, "Hello world!")
 	assertStrEqual(t, url.MimeType.Type, "text")
 	assertStrEqual(t, url.MimeType.Subtype, "html")
+
+	url, err = ParseUrl("ABOUT:BLANK")
+	assertNoErr(t, err)
+	assertStrEqual(t, url.Scheme, "about")
+	assertStrEqual(t, url.Host, "")
+	assertStrEqual(t, url.Path, "blank")
 }
 
 func TestParseMimeType(t *testing.T) {

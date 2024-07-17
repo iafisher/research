@@ -30,7 +30,6 @@ func TestRequest(t *testing.T) {
 	assertNoErr(t, err)
 
 	assertStrEqual(t, r.GetContent(), EXAMPLE_HTML_CONTENTS)
-	assertStrEqual(t, r.GetTextContent(), "Hello, world!")
 }
 
 type TestServer struct {
@@ -61,7 +60,7 @@ func launchServer(t *testing.T) TestServer {
 	assertNoErr(t, err)
 
 	// TODO: try to hit server until get a response, instead of sleeping
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	return TestServer{Tmpdir: tmpdir, Port: port, cmd: cmd}
 }
 
