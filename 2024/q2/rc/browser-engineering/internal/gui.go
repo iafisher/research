@@ -37,7 +37,6 @@ func (gui *Gui) Init() error {
 		return err
 	}
 
-	// gui.font, err = ttf.OpenFont("./assets/Atkinson_Hyperlegible/AtkinsonHyperlegible-Regular.ttf", 16)
 	gui.font, err = ttf.OpenFont("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 16)
 	if err != nil {
 		return err
@@ -47,6 +46,7 @@ func (gui *Gui) Init() error {
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -86,10 +86,21 @@ func (gui *Gui) Draw() error {
 		}
 	}
 
+	gui.drawScrollbar(surface)
+
 	timeElapsed := time.Since(start)
 	PrintVerbose(fmt.Sprintf("gui: redraw time: %d ms", timeElapsed.Milliseconds()))
 
 	return nil
+}
+
+const SCROLLBAR_HEIGHT int32 = 30
+const SCROLLBAR_WIDTH int32 = 5
+
+func (gui *Gui) drawScrollbar(surface *sdl.Surface) {
+	scrollbarY := int32((float32(gui.Scroll+SCROLLBAR_HEIGHT) / float32(gui.displayList.MaxY)) * float32(gui.Height))
+	rect := sdl.Rect{X: gui.Width - SCROLLBAR_WIDTH, Y: scrollbarY, W: SCROLLBAR_WIDTH, H: SCROLLBAR_HEIGHT}
+	surface.FillRect(&rect, sdl.Color{R: 0, G: 0, B: 255, A: sdl.ALPHA_OPAQUE}.Uint32())
 }
 
 const EMOJI_PATH string = "assets/openmoji/"
@@ -97,7 +108,7 @@ const EMOJI_PATH string = "assets/openmoji/"
 func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, emojiCode string) {
 	pngImage, err := img.Load(fmt.Sprintf("%s/%s.png", EMOJI_PATH, emojiCode))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gui: warning: could not load emoji (code=%s): %s\n", emojiCode, err)
+		guiWarning(fmt.Sprintf("could not load emoji (code=%s): %s\n", emojiCode, err))
 		return
 	}
 	defer pngImage.Free()
@@ -108,14 +119,14 @@ func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, emojiCode stri
 func (gui *Gui) drawChar(surface *sdl.Surface, x int32, y int32, c string) {
 	renderedText, err := gui.font.RenderUTF8Blended(c, sdl.Color{R: 255, G: 255, B: 255, A: 255})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gui: warning: could not render character (code=%d): %s\n", c[0], err.Error())
+		guiWarning(fmt.Sprintf("could not render character (code=%d): %s\n", c[0], err.Error()))
 		return
 	}
 	defer renderedText.Free()
 
 	err = renderedText.Blit(nil, surface, &sdl.Rect{X: x, Y: y})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "gui: warning: could not blit rendered text at X=%d, Y=%d\n", x, y)
+		guiWarning(fmt.Sprintf("could not blit rendered text at X=%d, Y=%d\n", x, y))
 	}
 }
 
@@ -192,4 +203,8 @@ func (gui *Gui) Cleanup() {
 	gui.font.Close()
 	sdl.Quit()
 	ttf.Quit()
+}
+
+func guiWarning(msg string) {
+	fmt.Fprintf(os.Stderr, "gui: warning: %s\n", msg)
 }
