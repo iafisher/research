@@ -119,6 +119,13 @@ func (gui *Gui) eventLoop() {
 				} else if t.Keysym.Scancode == sdl.SCANCODE_UP {
 					gui.scrollUp()
 				}
+			case *sdl.MouseWheelEvent:
+				// TODO: consider magnitude of Y (works fairly well even with this naive impl though)
+				if t.Y > 0 {
+					gui.scrollUp()
+				} else if t.Y < 0 {
+					gui.scrollDown()
+				}
 			case *sdl.QuitEvent:
 				running = false
 				return
