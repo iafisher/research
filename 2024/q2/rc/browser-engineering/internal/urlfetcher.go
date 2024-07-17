@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -251,7 +252,7 @@ func receiveHttpResponse(conn net.Conn) (*HttpResponse, error) {
 	}
 
 	content := make([]byte, contentLength)
-	_, err = reader.Read(content)
+	_, err = io.ReadFull(reader, content)
 	if err != nil {
 		return nil, err
 	}

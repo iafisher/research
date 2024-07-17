@@ -64,15 +64,16 @@ func fetchAndShowOne(fetcher *internal.UrlFetcher, gui *internal.Gui, urlString 
 		return err
 	}
 
-	if !noGui {
-		var text string
-		if url.ViewSource {
-			text = response.GetContent()
-		} else {
-			text = response.GetTextContent()
-		}
+	var text string
+	if url.ViewSource {
+		text = response.GetContent()
+	} else {
+		text = response.GetTextContent()
+	}
 
-		fmt.Println(text)
+	fmt.Println(text)
+
+	if !noGui {
 		err = gui.ShowTextPage(text)
 		if err != nil {
 			return err
