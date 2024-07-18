@@ -24,6 +24,7 @@ type DisplayListItemText struct {
 	Text     string
 	IsItalic bool
 	IsBold   bool
+	BaseFont *ttf.Font
 }
 
 type DisplayListItemEmoji struct {
@@ -36,23 +37,33 @@ func (x DisplayListItemEmoji) displayListItemContent() {}
 const HSTEP int32 = 15
 const VSTEP int32 = 18
 const LINE_SPACING float32 = 1.25
+const BASE_FONT string = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 
 // if raw is true then text is rendered as-is, not treated as HTML
-func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32) DisplayList {
+func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 	items := []DisplayListItem{}
 	var maxY int32 = 0
 	var cursorX int32 = 0
 	var cursorY int32 = 0
 
-	spaceWidth, _, err := font.SizeUTF8(" ")
-	if err != nil {
-		layoutWarning(fmt.Sprintf("error from font.SizeUTF8 for space width: %s", err.Error()))
-		spaceWidth = 15
-	}
+	fonts := make(map[int]*ttf.Font)
 
-	fontLineHeight := int32(font.Ascent() + font.Descent())
-	fontLineHeightSpaced := int32(float32(fontLineHeight) * LINE_SPACING)
 	for _, elem := range extractText(htmlText, raw) {
+		var err error
+
+		fontSize := elem.GetFontSize()
+		font, ok := fonts[fontSize]
+		if !ok {
+			font, err = ttf.OpenFont(BASE_FONT, fontSize)
+			if err != nil {
+				layoutWarning(fmt.Sprintf("error opening font (size=%d): %s", fontSize, err.Error()))
+				continue
+			}
+			fonts[fontSize] = font
+		}
+		fontLineHeight := int32(font.Ascent() + font.Descent())
+		fontLineHeightSpaced := int32(float32(fontLineHeight) * LINE_SPACING)
+
 		var elemHeight int32
 		switch t := elem.(type) {
 		case Word:
@@ -68,7 +79,13 @@ func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32
 				cursorY += fontLineHeightSpaced
 			}
 
-			content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold}
+			spaceWidth, _, err := font.SizeUTF8(" ")
+			if err != nil {
+				layoutWarning(fmt.Sprintf("error from font.SizeUTF8 (space width): %s", err.Error()))
+				continue
+			}
+
+			content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, BaseFont: font}
 			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, Content: content})
 			cursorX += int32(wordWidth)
 			cursorX += int32(spaceWidth)
@@ -103,21 +120,29 @@ func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32
 
 type LineElement interface {
 	lineElement()
+	GetFontSize() int
 }
 
 type Word struct {
 	Content  string
 	IsItalic bool
 	IsBold   bool
+	FontSize int
 }
 
 type Break struct {
 	IsParagraph bool
+	FontSize    int
 }
 
 type Emoji struct {
-	Code string
+	Code     string
+	FontSize int
 }
+
+func (w Word) GetFontSize() int  { return w.FontSize }
+func (b Break) GetFontSize() int { return b.FontSize }
+func (e Emoji) GetFontSize() int { return e.FontSize }
 
 func (w Word) lineElement()  {}
 func (b Break) lineElement() {}
@@ -128,6 +153,7 @@ func extractText(htmlText string, raw bool) []LineElement {
 	r := []LineElement{}
 	isItalic := false
 	isBold := false
+	fontSize := 16
 	for _, line := range strings.Split(text, "\n") {
 		var tagsOrNot []TagOrNot
 		if raw {
@@ -149,6 +175,14 @@ func extractText(htmlText string, raw bool) []LineElement {
 					isBold = true
 				} else if tag == "/b" {
 					isBold = false
+				} else if tag == "big" {
+					fontSize += 4
+				} else if tag == "/big" {
+					fontSize -= 4
+				} else if tag == "small" {
+					fontSize -= 2
+				} else if tag == "/small" {
+					fontSize += 2
 				}
 			} else {
 				for _, word := range strings.Split(tagOrNot.Content, " ") {
@@ -157,11 +191,11 @@ func extractText(htmlText string, raw bool) []LineElement {
 					}
 
 					// TODO: detect emojis
-					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold})
+					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold, FontSize: fontSize})
 				}
 			}
 		}
-		r = append(r, Break{IsParagraph: false})
+		r = append(r, Break{IsParagraph: false, FontSize: fontSize})
 	}
 	return r
 }

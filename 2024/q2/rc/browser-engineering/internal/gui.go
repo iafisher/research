@@ -18,7 +18,6 @@ type Gui struct {
 	raw         bool
 	displayList DisplayList
 	window      *sdl.Window
-	font        *ttf.Font
 }
 
 type DisplayList struct {
@@ -37,11 +36,6 @@ func (gui *Gui) Init() error {
 		return err
 	}
 
-	gui.font, err = ttf.OpenFont("/System/Library/Fonts/Supplemental/Arial Unicode.ttf", 16)
-	if err != nil {
-		return err
-	}
-
 	gui.window, err = sdl.CreateWindow("TinCan", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, gui.Width, gui.Height, sdl.WINDOW_SHOWN|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		return err
@@ -54,7 +48,7 @@ func (gui *Gui) Init() error {
 func (gui *Gui) ShowTextPage(text string, raw bool) error {
 	gui.text = text
 	gui.raw = raw
-	gui.displayList = Layout(gui.text, gui.raw, gui.font, gui.Width, gui.Height)
+	gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
 	gui.Draw()
 
 	gui.window.UpdateSurface()
@@ -133,9 +127,9 @@ func (gui *Gui) drawString(surface *sdl.Surface, x int32, y int32, content Displ
 		baseStyle |= ttf.STYLE_BOLD
 	}
 
-	gui.font.SetStyle(baseStyle)
+	content.BaseFont.SetStyle(baseStyle)
 
-	renderedText, err := gui.font.RenderUTF8Blended(content.Text, sdl.Color{R: 0, G: 0, B: 0, A: 255})
+	renderedText, err := content.BaseFont.RenderUTF8Blended(content.Text, sdl.Color{R: 0, G: 0, B: 0, A: 255})
 	if err != nil {
 		guiWarning(fmt.Sprintf("could not render string (s=%q): %s\n", content.Text, err.Error()))
 		return
@@ -206,7 +200,7 @@ func (gui *Gui) eventLoop() {
 				if t.Event == sdl.WINDOWEVENT_RESIZED {
 					gui.Width = t.Data1
 					gui.Height = t.Data2
-					gui.displayList = Layout(gui.text, gui.raw, gui.font, gui.Width, gui.Height)
+					gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
 					gui.Draw()
 				}
 			}
@@ -218,7 +212,6 @@ func (gui *Gui) eventLoop() {
 
 func (gui *Gui) Cleanup() {
 	gui.window.Destroy()
-	gui.font.Close()
 	sdl.Quit()
 	ttf.Quit()
 }
