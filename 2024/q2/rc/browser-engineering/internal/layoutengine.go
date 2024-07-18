@@ -2,9 +2,12 @@ package internal
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/veandco/go-sdl2/ttf"
 )
 
 type DisplayListItem struct {
@@ -18,41 +21,65 @@ const HSTEP int32 = 15
 const VSTEP int32 = 18
 
 // if raw is true then text is rendered as-is, not treated as HTML
-func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
+func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32) DisplayList {
 	items := []DisplayListItem{}
 	var maxY int32 = 0
 	var cursorX int32 = 0
 	var cursorY int32 = 0
 
+	spaceWidth, _, err := font.SizeUTF8(" ")
+	if err != nil {
+		layoutWarning(fmt.Sprintf("error from font.SizeUTF8 for space width: %s", err.Error()))
+		spaceWidth = 15
+	}
+
+	fontLineHeight := int32(font.Ascent() + font.Descent())
+	fontLineHeightSpaced := int32(float32(fontLineHeight) * 1.25)
 	for _, elem := range extractText(htmlText, raw) {
+		var elemHeight int32
 		switch t := elem.(type) {
 		case Word:
+			wordWidth, wordHeight, err := font.SizeUTF8(t.Content)
+			if err != nil {
+				layoutWarning(fmt.Sprintf("error from font.SizeUTF8: %s", err.Error()))
+				continue
+			}
+			elemHeight = int32(wordHeight)
+
+			if cursorX+int32(wordWidth) > width {
+				cursorX = 0
+				cursorY += fontLineHeightSpaced
+			}
+
 			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: t.Content})
-			cursorX += HSTEP * int32(len(t.Content))
+			cursorX += int32(wordWidth)
+			cursorX += int32(spaceWidth)
 		case Break:
 			cursorX = 0
 			if t.IsParagraph {
-				cursorY += VSTEP * 2
+				cursorY += fontLineHeight * 2
 			} else {
-				cursorY += VSTEP
+				cursorY += fontLineHeightSpaced
 			}
+			elemHeight = 0
 			continue
 		case Emoji:
 			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, EmojiCode: t.Code})
 			cursorX += HSTEP
+			elemHeight = VSTEP
 		}
 
 		if cursorY > maxY {
-			maxY = cursorY
+			maxY = cursorY + elemHeight
 		}
 
 		if cursorX >= width {
 			cursorX = 0
-			cursorY += VSTEP
+			cursorY += fontLineHeightSpaced
 		}
 	}
 
-	return DisplayList{Items: items, MaxY: maxY + VSTEP}
+	return DisplayList{Items: items, MaxY: maxY}
 }
 
 type LineElement interface {
@@ -179,4 +206,8 @@ func (cr *CharReader) Next() rune {
 
 func (cr *CharReader) Done() bool {
 	return cr.Index >= len(cr.Content)
+}
+
+func layoutWarning(msg string) {
+	fmt.Fprintf(os.Stderr, "tincan: layout: warning: %s", msg)
 }

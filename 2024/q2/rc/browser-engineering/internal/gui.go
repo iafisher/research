@@ -54,7 +54,7 @@ func (gui *Gui) Init() error {
 func (gui *Gui) ShowTextPage(text string, raw bool) error {
 	gui.text = text
 	gui.raw = raw
-	gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
+	gui.displayList = Layout(gui.text, gui.raw, gui.font, gui.Width, gui.Height)
 	gui.Draw()
 
 	gui.window.UpdateSurface()
@@ -188,7 +188,7 @@ func (gui *Gui) eventLoop() {
 				if t.Event == sdl.WINDOWEVENT_RESIZED {
 					gui.Width = t.Data1
 					gui.Height = t.Data2
-					gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
+					gui.displayList = Layout(gui.text, gui.raw, gui.font, gui.Width, gui.Height)
 					gui.Draw()
 				}
 			}
