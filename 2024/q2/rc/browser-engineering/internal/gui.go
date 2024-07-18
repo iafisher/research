@@ -70,7 +70,7 @@ func (gui *Gui) Draw() error {
 	}
 
 	// clear the screen
-	surface.FillRect(nil, 0)
+	surface.FillRect(nil, sdl.Color{R: 255, G: 255, B: 255, A: sdl.ALPHA_OPAQUE}.Uint32())
 
 	for _, item := range gui.displayList.Items {
 		if gui.isOffscreen(item.Y) {
@@ -79,14 +79,18 @@ func (gui *Gui) Draw() error {
 
 		x := item.X
 		y := item.Y - gui.Scroll
-		if item.EmojiCode != "" {
-			gui.drawEmoji(surface, x, y, item.EmojiCode)
-		} else {
-			gui.drawChar(surface, x, y, item.C)
+
+		switch content := item.Content.(type) {
+		case DisplayListItemText:
+			gui.drawString(surface, x, y, content)
+		case DisplayListItemEmoji:
+			gui.drawEmoji(surface, x, y, content)
 		}
 	}
 
-	gui.drawScrollbar(surface)
+	if gui.displayList.MaxY > gui.Height {
+		gui.drawScrollbar(surface)
+	}
 
 	timeElapsed := time.Since(start)
 	PrintVerbose(fmt.Sprintf("gui: redraw time: %d ms", timeElapsed.Milliseconds()))
@@ -98,6 +102,7 @@ const SCROLLBAR_HEIGHT int32 = 30
 const SCROLLBAR_WIDTH int32 = 5
 
 func (gui *Gui) drawScrollbar(surface *sdl.Surface) {
+	// TODO: doesn't scroll to the bottom on small screens
 	scrollbarY := int32((float32(gui.Scroll+SCROLLBAR_HEIGHT) / float32(gui.displayList.MaxY)) * float32(gui.Height))
 	rect := sdl.Rect{X: gui.Width - SCROLLBAR_WIDTH, Y: scrollbarY, W: SCROLLBAR_WIDTH, H: SCROLLBAR_HEIGHT}
 	surface.FillRect(&rect, sdl.Color{R: 0, G: 0, B: 255, A: sdl.ALPHA_OPAQUE}.Uint32())
@@ -105,10 +110,10 @@ func (gui *Gui) drawScrollbar(surface *sdl.Surface) {
 
 const EMOJI_PATH string = "assets/openmoji/"
 
-func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, emojiCode string) {
-	pngImage, err := img.Load(fmt.Sprintf("%s/%s.png", EMOJI_PATH, emojiCode))
+func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, content DisplayListItemEmoji) {
+	pngImage, err := img.Load(fmt.Sprintf("%s/%s.png", EMOJI_PATH, content.Code))
 	if err != nil {
-		guiWarning(fmt.Sprintf("could not load emoji (code=%s): %s\n", emojiCode, err))
+		guiWarning(fmt.Sprintf("could not load emoji (code=%s): %s\n", content.Code, err))
 		return
 	}
 	defer pngImage.Free()
@@ -116,10 +121,23 @@ func (gui *Gui) drawEmoji(surface *sdl.Surface, x int32, y int32, emojiCode stri
 	pngImage.BlitScaled(nil, surface, &sdl.Rect{X: x, Y: y, W: HSTEP, H: VSTEP})
 }
 
-func (gui *Gui) drawChar(surface *sdl.Surface, x int32, y int32, c string) {
-	renderedText, err := gui.font.RenderUTF8Blended(c, sdl.Color{R: 255, G: 255, B: 255, A: 255})
+func (gui *Gui) drawString(surface *sdl.Surface, x int32, y int32, content DisplayListItemText) {
+	var baseStyle int
+	if content.IsItalic {
+		baseStyle = ttf.STYLE_ITALIC
+	} else {
+		baseStyle = ttf.STYLE_NORMAL
+	}
+
+	if content.IsBold {
+		baseStyle |= ttf.STYLE_BOLD
+	}
+
+	gui.font.SetStyle(baseStyle)
+
+	renderedText, err := gui.font.RenderUTF8Blended(content.Text, sdl.Color{R: 0, G: 0, B: 0, A: 255})
 	if err != nil {
-		guiWarning(fmt.Sprintf("could not render character (code=%d): %s\n", c[0], err.Error()))
+		guiWarning(fmt.Sprintf("could not render string (s=%q): %s\n", content.Text, err.Error()))
 		return
 	}
 	defer renderedText.Free()

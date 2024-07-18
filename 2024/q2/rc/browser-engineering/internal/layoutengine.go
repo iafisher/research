@@ -11,14 +11,31 @@ import (
 )
 
 type DisplayListItem struct {
-	X         int32
-	Y         int32
-	C         string
-	EmojiCode string
+	X       int32
+	Y       int32
+	Content DisplayListItemContent
 }
+
+type DisplayListItemContent interface {
+	displayListItemContent()
+}
+
+type DisplayListItemText struct {
+	Text     string
+	IsItalic bool
+	IsBold   bool
+}
+
+type DisplayListItemEmoji struct {
+	Code string
+}
+
+func (x DisplayListItemText) displayListItemContent()  {}
+func (x DisplayListItemEmoji) displayListItemContent() {}
 
 const HSTEP int32 = 15
 const VSTEP int32 = 18
+const LINE_SPACING float32 = 1.25
 
 // if raw is true then text is rendered as-is, not treated as HTML
 func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32) DisplayList {
@@ -34,7 +51,7 @@ func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32
 	}
 
 	fontLineHeight := int32(font.Ascent() + font.Descent())
-	fontLineHeightSpaced := int32(float32(fontLineHeight) * 1.25)
+	fontLineHeightSpaced := int32(float32(fontLineHeight) * LINE_SPACING)
 	for _, elem := range extractText(htmlText, raw) {
 		var elemHeight int32
 		switch t := elem.(type) {
@@ -51,7 +68,8 @@ func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32
 				cursorY += fontLineHeightSpaced
 			}
 
-			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: t.Content})
+			content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold}
+			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, Content: content})
 			cursorX += int32(wordWidth)
 			cursorX += int32(spaceWidth)
 		case Break:
@@ -64,7 +82,8 @@ func Layout(htmlText string, raw bool, font *ttf.Font, width int32, height int32
 			elemHeight = 0
 			continue
 		case Emoji:
-			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, EmojiCode: t.Code})
+			content := DisplayListItemEmoji{Code: t.Code}
+			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, Content: content})
 			cursorX += HSTEP
 			elemHeight = VSTEP
 		}
@@ -87,7 +106,9 @@ type LineElement interface {
 }
 
 type Word struct {
-	Content string
+	Content  string
+	IsItalic bool
+	IsBold   bool
 }
 
 type Break struct {
@@ -103,52 +124,102 @@ func (b Break) lineElement() {}
 func (e Emoji) lineElement() {}
 
 func extractText(htmlText string, raw bool) []LineElement {
-	var text string
-	if raw {
-		text = htmlText
-	} else {
-		text = stripTags(htmlText)
-	}
-
-	text = replaceEntityRefs(text)
+	text := replaceEntityRefs(htmlText)
 	r := []LineElement{}
+	isItalic := false
+	isBold := false
 	for _, line := range strings.Split(text, "\n") {
-		for _, word := range strings.Split(line, " ") {
-			if word == "" {
-				continue
-			}
+		var tagsOrNot []TagOrNot
+		if raw {
+			tagsOrNot = []TagOrNot{{Content: line, IsTag: false}}
+		} else {
+			tagsOrNot = stripTags(line)
+		}
 
-			// TODO: detect emojis
-			r = append(r, Word{Content: word})
+		for _, tagOrNot := range tagsOrNot {
+			if tagOrNot.IsTag {
+				tag := tagOrNot.Content
+				if tag == "p" {
+					r = append(r, Break{IsParagraph: true})
+				} else if tag == "i" {
+					isItalic = true
+				} else if tag == "/i" {
+					isItalic = false
+				} else if tag == "b" {
+					isBold = true
+				} else if tag == "/b" {
+					isBold = false
+				}
+			} else {
+				for _, word := range strings.Split(tagOrNot.Content, " ") {
+					if word == "" {
+						continue
+					}
+
+					// TODO: detect emojis
+					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold})
+				}
+			}
 		}
 		r = append(r, Break{IsParagraph: false})
 	}
 	return r
 }
 
-func stripTags(htmlText string) string {
-	inTag := false
-	reader := CharReader{Content: htmlText}
-	var sb strings.Builder
+type TagOrNot struct {
+	Content string
+	IsTag   bool
+}
 
+func stripTags(htmlText string) []TagOrNot {
+	inTag := false
+	startOfTag := -1
+	reader := CharReader{Content: htmlText}
+
+	r := []TagOrNot{}
 	for !reader.Done() {
 		runeValue := reader.Next()
 		if !inTag {
 			if runeValue == '<' {
+				startOfTag = reader.Index
 				inTag = true
 				continue
 			}
 		} else {
 			if runeValue == '>' {
+				fullTagBody := htmlText[startOfTag : reader.Index-1]
+				r = append(r, TagOrNot{Content: strings.SplitN(fullTagBody, " ", 2)[0], IsTag: true})
 				inTag = false
 			}
 			continue
 		}
 
-		sb.WriteRune(runeValue)
+		r = append(r, TagOrNot{Content: string(runeValue), IsTag: false})
 	}
 
-	return sb.String()
+	return mergeText(r)
+}
+
+func mergeText(tags []TagOrNot) []TagOrNot {
+	r := []TagOrNot{}
+	var sb strings.Builder
+	for _, tag := range tags {
+		if tag.IsTag {
+			if sb.Len() > 0 {
+				r = append(r, TagOrNot{Content: sb.String(), IsTag: false})
+				sb.Reset()
+			}
+			r = append(r, tag)
+		} else {
+			sb.WriteString(tag.Content)
+		}
+	}
+
+	if sb.Len() > 0 {
+		r = append(r, TagOrNot{Content: sb.String(), IsTag: false})
+	}
+
+	return r
 }
 
 func replaceEntityRefs(text string) string {
