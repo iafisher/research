@@ -2,6 +2,8 @@ package internal
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -22,54 +24,28 @@ func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 	var cursorX int32 = 0
 	var cursorY int32 = 0
 
-	inTag := false
-	startOfTag := -1
-	reader := CharReader{Content: htmlText}
-
-	for !reader.Done() {
-		runeValue := reader.Next()
-		if !raw {
-			if !inTag {
-				if runeValue == '<' {
-					inTag = true
-					startOfTag = reader.Index
-					continue
-				} else if runeValue == '&' {
-					code := readEntityRef(&reader)
-					if code == "lt" {
-						runeValue = '<'
-					} else if code == "gt" {
-						runeValue = '>'
-					}
-				}
-			} else {
-				if runeValue == '>' {
-					inTag = false
-					// TODO: doesn't work if element has attributes, e.g. `<p class="whatever'>`
-
-					tagName := reader.Content[startOfTag : reader.Index-1]
-					if tagName == "p" {
-						cursorY += VSTEP * 2
-					}
-				}
-				continue
-			}
-		}
-
-		if runeValue == '\n' {
+	for _, elem := range extractText(htmlText, raw) {
+		switch t := elem.(type) {
+		case Word:
+			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: t.Content})
+			cursorX += HSTEP * int32(len(t.Content))
+		case Break:
 			cursorX = 0
-			cursorY += VSTEP
+			if t.IsParagraph {
+				cursorY += VSTEP * 2
+			} else {
+				cursorY += VSTEP
+			}
 			continue
+		case Emoji:
+			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, EmojiCode: t.Code})
+			cursorX += HSTEP
 		}
 
-		emojiCode := lookUpEmojiCode(runeValue)
-
-		items = append(items, DisplayListItem{X: cursorX, Y: cursorY, C: string(runeValue), EmojiCode: emojiCode})
 		if cursorY > maxY {
 			maxY = cursorY
 		}
 
-		cursorX += HSTEP
 		if cursorX >= width {
 			cursorX = 0
 			cursorY += VSTEP
@@ -77,6 +53,90 @@ func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
 	}
 
 	return DisplayList{Items: items, MaxY: maxY + VSTEP}
+}
+
+type LineElement interface {
+	lineElement()
+}
+
+type Word struct {
+	Content string
+}
+
+type Break struct {
+	IsParagraph bool
+}
+
+type Emoji struct {
+	Code string
+}
+
+func (w Word) lineElement()  {}
+func (b Break) lineElement() {}
+func (e Emoji) lineElement() {}
+
+func extractText(htmlText string, raw bool) []LineElement {
+	var text string
+	if raw {
+		text = htmlText
+	} else {
+		text = stripTags(htmlText)
+	}
+
+	text = replaceEntityRefs(text)
+	r := []LineElement{}
+	for _, line := range strings.Split(text, "\n") {
+		for _, word := range strings.Split(line, " ") {
+			if word == "" {
+				continue
+			}
+
+			// TODO: detect emojis
+			r = append(r, Word{Content: word})
+		}
+		r = append(r, Break{IsParagraph: false})
+	}
+	return r
+}
+
+func stripTags(htmlText string) string {
+	inTag := false
+	reader := CharReader{Content: htmlText}
+	var sb strings.Builder
+
+	for !reader.Done() {
+		runeValue := reader.Next()
+		if !inTag {
+			if runeValue == '<' {
+				inTag = true
+				continue
+			}
+		} else {
+			if runeValue == '>' {
+				inTag = false
+			}
+			continue
+		}
+
+		sb.WriteRune(runeValue)
+	}
+
+	return sb.String()
+}
+
+func replaceEntityRefs(text string) string {
+	// TODO: compile once
+	pat := regexp.MustCompile("\\&([A-Za-z]+;)")
+	return pat.ReplaceAllStringFunc(text, func(code string) string {
+		code = strings.ToLower(code)
+		if code == "&gt;" {
+			return ">"
+		} else if code == "&lt;" {
+			return "<"
+		} else {
+			return code
+		}
+	})
 }
 
 func lookUpEmojiCode(runeValue rune) string {
