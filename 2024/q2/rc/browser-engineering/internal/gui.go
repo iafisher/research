@@ -14,8 +14,7 @@ type Gui struct {
 	Width       int32
 	Height      int32
 	Scroll      int32
-	text        string
-	raw         bool
+	engine      Engine
 	displayList DisplayList
 	window      *sdl.Window
 }
@@ -46,9 +45,8 @@ func (gui *Gui) Init() error {
 
 // raw passed on to Layout()
 func (gui *Gui) ShowTextPage(text string, raw bool) error {
-	gui.text = text
-	gui.raw = raw
-	gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
+	gui.engine = Engine{htmlText: text, raw: raw}
+	gui.displayList = gui.engine.Layout(gui.Width, gui.Height)
 	gui.Draw()
 
 	gui.window.UpdateSurface()
@@ -200,7 +198,7 @@ func (gui *Gui) eventLoop() {
 				if t.Event == sdl.WINDOWEVENT_RESIZED {
 					gui.Width = t.Data1
 					gui.Height = t.Data2
-					gui.displayList = Layout(gui.text, gui.raw, gui.Width, gui.Height)
+					gui.displayList = gui.engine.Layout(gui.Width, gui.Height)
 					gui.Draw()
 				}
 			}

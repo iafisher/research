@@ -39,83 +39,111 @@ const VSTEP int32 = 18
 const LINE_SPACING float32 = 1.25
 const BASE_FONT string = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 
+type Engine struct {
+	htmlText                string
+	raw                     bool
+	fonts                   map[int]*ttf.Font
+	lineBuffer              []LineElement
+	maxY                    int32
+	cursorX                 int32
+	cursorY                 int32
+	displayList             []DisplayListItem
+	currentLineHeight       int32
+	currentLineHeightSpaced int32
+}
+
 // if raw is true then text is rendered as-is, not treated as HTML
-func Layout(htmlText string, raw bool, width int32, height int32) DisplayList {
-	items := []DisplayListItem{}
-	var maxY int32 = 0
-	var cursorX int32 = 0
-	var cursorY int32 = 0
+func (engine *Engine) Layout(width int32, height int32) DisplayList {
+	engine.displayList = []DisplayListItem{}
+	engine.maxY = 0
+	engine.cursorX = 0
+	engine.cursorY = 0
+	engine.fonts = make(map[int]*ttf.Font)
 
-	fonts := make(map[int]*ttf.Font)
-
-	for _, elem := range extractText(htmlText, raw) {
-		var err error
-
-		fontSize := elem.GetFontSize()
-		font, ok := fonts[fontSize]
-		if !ok {
-			font, err = ttf.OpenFont(BASE_FONT, fontSize)
-			if err != nil {
-				layoutWarning(fmt.Sprintf("error opening font (size=%d): %s", fontSize, err.Error()))
-				continue
-			}
-			fonts[fontSize] = font
-		}
-		fontLineHeight := int32(font.Ascent() + font.Descent())
-		fontLineHeightSpaced := int32(float32(fontLineHeight) * LINE_SPACING)
-
-		var elemHeight int32
-		switch t := elem.(type) {
-		case Word:
-			wordWidth, wordHeight, err := font.SizeUTF8(t.Content)
-			if err != nil {
-				layoutWarning(fmt.Sprintf("error from font.SizeUTF8: %s", err.Error()))
-				continue
-			}
-			elemHeight = int32(wordHeight)
-
-			if cursorX+int32(wordWidth) > width {
-				cursorX = 0
-				cursorY += fontLineHeightSpaced
-			}
-
-			spaceWidth, _, err := font.SizeUTF8(" ")
-			if err != nil {
-				layoutWarning(fmt.Sprintf("error from font.SizeUTF8 (space width): %s", err.Error()))
-				continue
-			}
-
-			content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, BaseFont: font}
-			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, Content: content})
-			cursorX += int32(wordWidth)
-			cursorX += int32(spaceWidth)
-		case Break:
-			cursorX = 0
-			if t.IsParagraph {
-				cursorY += fontLineHeight * 2
-			} else {
-				cursorY += fontLineHeightSpaced
-			}
-			elemHeight = 0
-			continue
-		case Emoji:
-			content := DisplayListItemEmoji{Code: t.Code}
-			items = append(items, DisplayListItem{X: cursorX, Y: cursorY, Content: content})
-			cursorX += HSTEP
-			elemHeight = VSTEP
-		}
-
-		if cursorY > maxY {
-			maxY = cursorY + elemHeight
-		}
-
-		if cursorX >= width {
-			cursorX = 0
-			cursorY += fontLineHeightSpaced
-		}
+	for _, elem := range extractText(engine.htmlText, engine.raw) {
+		engine.layoutOne(elem, width, height)
 	}
 
-	return DisplayList{Items: items, MaxY: maxY}
+	return DisplayList{Items: engine.displayList, MaxY: engine.maxY}
+}
+
+func (engine *Engine) layoutOne(elem LineElement, width int32, height int32) {
+	font := engine.loadFont(elem)
+	if font == nil {
+		return
+	}
+
+	var elemHeight int32
+	switch t := elem.(type) {
+	case Word:
+		wordWidth, wordHeight, err := font.SizeUTF8(t.Content)
+		if err != nil {
+			layoutWarning(fmt.Sprintf("error from font.SizeUTF8: %s", err.Error()))
+			return
+		}
+		elemHeight = int32(wordHeight)
+
+		if engine.cursorX+int32(wordWidth) > width {
+			engine.breakLine(false)
+		}
+
+		spaceWidth, _, err := font.SizeUTF8(" ")
+		if err != nil {
+			layoutWarning(fmt.Sprintf("error from font.SizeUTF8 (space width): %s", err.Error()))
+			return
+		}
+
+		content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, BaseFont: font}
+		engine.displayList = append(engine.displayList, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
+		engine.cursorX += int32(wordWidth + spaceWidth)
+	case Break:
+		engine.breakLine(t.IsParagraph)
+		return
+	case Emoji:
+		content := DisplayListItemEmoji{Code: t.Code}
+		engine.displayList = append(engine.displayList, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
+		engine.cursorX += HSTEP
+		elemHeight = VSTEP
+	}
+
+	if engine.cursorY > engine.maxY {
+		engine.maxY = engine.cursorY + elemHeight
+	}
+
+	if engine.cursorX >= width {
+		engine.breakLine(false)
+	}
+}
+
+func (engine *Engine) breakLine(isParagraph bool) {
+	engine.cursorX = 0
+	engine.cursorY += engine.currentLineHeightSpaced
+	if isParagraph {
+		engine.cursorY += engine.currentLineHeightSpaced
+	}
+}
+
+func (engine *Engine) loadFont(elem LineElement) *ttf.Font {
+	fontSize := elem.GetFontSize()
+	font, ok := engine.fonts[fontSize]
+	if !ok {
+		var err error
+		font, err = ttf.OpenFont(BASE_FONT, fontSize)
+		if err != nil {
+			layoutWarning(fmt.Sprintf("error opening font (size=%d): %s", fontSize, err.Error()))
+			return nil
+		}
+		engine.fonts[fontSize] = font
+	}
+	engine.currentLineHeight = int32(font.Ascent() + font.Descent())
+	engine.currentLineHeightSpaced = int32(float32(engine.currentLineHeight) * LINE_SPACING)
+	return font
+}
+
+func (engine *Engine) Cleanup() {
+	for _, value := range engine.fonts {
+		value.Close()
+	}
 }
 
 type LineElement interface {
