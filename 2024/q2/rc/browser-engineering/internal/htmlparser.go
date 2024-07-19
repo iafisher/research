@@ -3,6 +3,7 @@ package internal
 import (
 	"fmt"
 	"os"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -11,6 +12,7 @@ import (
 // (but this makes typing harder, especially for TreeBuilder)
 type HtmlElement struct {
 	Tag      string
+	Attrs    map[string]string
 	Text     string
 	Children []HtmlElement
 	Parent   *HtmlElement
@@ -43,40 +45,95 @@ func (p *HtmlParser) done() bool {
 	return p.index >= len(p.text)
 }
 
+var SELF_CLOSING = map[string]bool{
+	"area":   true,
+	"base":   true,
+	"br":     true,
+	"col":    true,
+	"embed":  true,
+	"hr":     true,
+	"img":    true,
+	"input":  true,
+	"link":   true,
+	"meta":   true,
+	"param":  true,
+	"source": true,
+	"track":  true,
+	"wbr":    true,
+}
+
 // invariant: p.index sits on the character *after* the opening bracket
 func (p *HtmlParser) readTag() {
 	isClosing := p.chIf('/')
-	tag := p.readWord()
-	// TODO: parse body of tag
-	p.readUntil('>')
+	tag := p.readTagName()
+	attrs := p.readTagAttrs()
+	p.start = p.index
+
+	// ignore <!doctype> declaration and comments
+	if strings.HasPrefix(tag, "!") {
+		return
+	}
 
 	if isClosing {
 		p.tb.Close(tag)
 	} else {
-		p.tb.Open(tag)
+		p.tb.Open(tag, attrs)
+		if isSelfClosing(tag) {
+			p.tb.Close(tag)
+		}
 	}
-	p.start = p.index
 }
 
-func (p *HtmlParser) readWord() string {
+func isSelfClosing(tag string) bool {
+	ok1, ok2 := SELF_CLOSING[tag]
+	return ok2 && ok1
+}
+
+func (p *HtmlParser) readTagName() string {
 	start := p.index
 	for !p.done() {
 		runeValue, width := p.decodeOne()
-		if !(unicode.IsLetter(runeValue) || unicode.IsDigit(runeValue)) {
+		if !(unicode.IsLetter(runeValue) || unicode.IsDigit(runeValue) || runeValue == '!') {
 			return p.text[start:p.index]
 		}
 		p.index += width
 	}
-	return p.text[start:]
+	return strings.ToLower(p.text[start:])
 }
 
-func (p *HtmlParser) readUntil(delim rune) {
-	for !p.done() {
-		runeValue := p.ch()
-		if runeValue == delim {
-			return
+func (p *HtmlParser) readTagAttrs() map[string]string {
+	raw := p.readUntil('>')
+	// TODO: handle quoted attributes with whitespace
+	parts := strings.Split(raw, " ")
+
+	r := map[string]string{}
+	for _, part := range parts {
+		subparts := strings.SplitN(part, "=", 2)
+		key := strings.ToLower(subparts[0])
+		if len(subparts) == 1 {
+			r[key] = ""
+		} else {
+			// TODO: handle backslash escapes
+			val := strings.Trim(subparts[1], "\"")
+			r[key] = val
 		}
 	}
+
+	// TODO: handle trailing '/' for self-closing tags
+
+	return r
+}
+
+func (p *HtmlParser) readUntil(delim rune) string {
+	start := p.index
+	for !p.done() {
+		i := p.index
+		runeValue := p.ch()
+		if runeValue == delim {
+			return p.text[start:i]
+		}
+	}
+	return p.text[start:]
 }
 
 func (p *HtmlParser) chIf(lookingFor rune) bool {
@@ -105,8 +162,8 @@ type TreeBuilder struct {
 	stack []*HtmlElement
 }
 
-func (tb *TreeBuilder) Open(tag string) {
-	elem := HtmlElement{Tag: tag}
+func (tb *TreeBuilder) Open(tag string, attrs map[string]string) {
+	elem := HtmlElement{Tag: tag, Attrs: attrs}
 	if len(tb.stack) == 0 {
 		tb.root = elem
 		tb.stack = []*HtmlElement{&tb.root}
@@ -132,12 +189,13 @@ func (tb *TreeBuilder) Close(tag string) {
 }
 
 func (tb *TreeBuilder) Text(text string) {
-	if len(text) == 0 {
+	stripped := strings.TrimSpace(text)
+	if len(stripped) == 0 {
 		return
 	}
 
 	if len(tb.stack) == 0 {
-		parserWarning("saw text at document roo")
+		parserWarning("saw text at document root")
 		return
 	}
 
@@ -154,6 +212,21 @@ func setParents(elem *HtmlElement) {
 	for i := range elem.Children {
 		elem.Children[i].Parent = elem
 		setParents(&elem.Children[i])
+	}
+}
+
+func printTree(root *HtmlElement, indent int) {
+	for i := 0; i < indent; i++ {
+		fmt.Print(" ")
+	}
+
+	if root.Tag != "" {
+		fmt.Printf("<%s> %d attr(s)\n", root.Tag, len(root.Attrs))
+		for i := range root.Children {
+			printTree(&root.Children[i], indent+2)
+		}
+	} else {
+		fmt.Printf("%d char(s) of text\n", len(root.Text))
 	}
 }
 

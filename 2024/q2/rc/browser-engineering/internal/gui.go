@@ -47,6 +47,10 @@ func (gui *Gui) Init() error {
 
 // raw passed on to Layout()
 func (gui *Gui) ShowTextPage(text string, raw bool) error {
+	htmlParser := HtmlParser{}
+	tree := htmlParser.Parse(text)
+	printTree(tree, 0)
+
 	gui.engine = Engine{htmlText: text, raw: raw}
 	gui.displayList = gui.engine.Layout(gui.Width, gui.Height)
 	gui.Draw()
