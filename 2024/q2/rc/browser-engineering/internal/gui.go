@@ -35,6 +35,8 @@ func (gui *Gui) Init() error {
 		return err
 	}
 
+	// TODO: enable sdl.WINDOW_ALLOW_HIGHDPI
+	// Discussion: https://discourse.libsdl.org/t/high-dpi-mode/34411/4
 	gui.window, err = sdl.CreateWindow("TinCan", sdl.WINDOWPOS_UNDEFINED, sdl.WINDOWPOS_UNDEFINED, gui.Width, gui.Height, sdl.WINDOW_SHOWN|sdl.WINDOW_RESIZABLE)
 	if err != nil {
 		return err
@@ -91,13 +93,23 @@ func (gui *Gui) Draw() error {
 }
 
 const SCROLLBAR_HEIGHT int32 = 30
+const MIN_SCROLLBAR_HEIGHT int32 = 10
 const SCROLLBAR_WIDTH int32 = 5
 
 func (gui *Gui) drawScrollbar(surface *sdl.Surface) {
+	percScreen := float32(gui.Height) / float32(gui.displayList.MaxY)
+	scrollbarHeight := int32(float32(gui.Height) * percScreen)
+	if scrollbarHeight < MIN_SCROLLBAR_HEIGHT {
+		scrollbarHeight = MIN_SCROLLBAR_HEIGHT
+	}
+
 	// TODO: doesn't scroll to the bottom on small screens
-	scrollbarY := int32((float32(gui.Scroll+SCROLLBAR_HEIGHT) / float32(gui.displayList.MaxY)) * float32(gui.Height))
-	rect := sdl.Rect{X: gui.Width - SCROLLBAR_WIDTH, Y: scrollbarY, W: SCROLLBAR_WIDTH, H: SCROLLBAR_HEIGHT}
-	surface.FillRect(&rect, sdl.Color{R: 0, G: 0, B: 255, A: sdl.ALPHA_OPAQUE}.Uint32())
+	scrollbarY := int32((float32(gui.Scroll) / float32(gui.displayList.MaxY)) * float32(gui.Height))
+	rect := sdl.Rect{X: gui.Width - SCROLLBAR_WIDTH, Y: scrollbarY, W: SCROLLBAR_WIDTH, H: scrollbarHeight}
+	// TODO: why doesn't this work?
+	//   color := sdl.Color{R: 0, G: 0, B: 255, A: sdl.ALPHA_OPAQUE}.Uint32()
+	var color uint32 = 0x0000FF
+	surface.FillRect(&rect, color)
 }
 
 const EMOJI_PATH string = "assets/openmoji/"
