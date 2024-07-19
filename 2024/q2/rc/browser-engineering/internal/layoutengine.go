@@ -43,7 +43,7 @@ type Engine struct {
 	htmlText                string
 	raw                     bool
 	fonts                   map[int]*ttf.Font
-	lineBuffer              []LineElement
+	lineBuffer              []DisplayListItem
 	maxY                    int32
 	cursorX                 int32
 	cursorY                 int32
@@ -63,6 +63,7 @@ func (engine *Engine) Layout(width int32, height int32) DisplayList {
 	for _, elem := range extractText(engine.htmlText, engine.raw) {
 		engine.layoutOne(elem, width, height)
 	}
+	engine.flush()
 
 	return DisplayList{Items: engine.displayList, MaxY: engine.maxY}
 }
@@ -94,14 +95,14 @@ func (engine *Engine) layoutOne(elem LineElement, width int32, height int32) {
 		}
 
 		content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, BaseFont: font}
-		engine.displayList = append(engine.displayList, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
+		engine.lineBuffer = append(engine.lineBuffer, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
 		engine.cursorX += int32(wordWidth + spaceWidth)
-	case Break:
-		engine.breakLine(t.IsParagraph)
+	case ParagraphBreak:
+		engine.breakLine(true)
 		return
 	case Emoji:
 		content := DisplayListItemEmoji{Code: t.Code}
-		engine.displayList = append(engine.displayList, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
+		engine.lineBuffer = append(engine.lineBuffer, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
 		engine.cursorX += HSTEP
 		elemHeight = VSTEP
 	}
@@ -115,7 +116,14 @@ func (engine *Engine) layoutOne(elem LineElement, width int32, height int32) {
 	}
 }
 
+func (engine *Engine) flush() {
+	engine.displayList = append(engine.displayList, engine.lineBuffer...)
+	engine.lineBuffer = []DisplayListItem{}
+}
+
 func (engine *Engine) breakLine(isParagraph bool) {
+	engine.flush()
+
 	engine.cursorX = 0
 	engine.cursorY += engine.currentLineHeightSpaced
 	if isParagraph {
@@ -158,9 +166,8 @@ type Word struct {
 	FontSize int
 }
 
-type Break struct {
-	IsParagraph bool
-	FontSize    int
+type ParagraphBreak struct {
+	FontSize int
 }
 
 type Emoji struct {
@@ -168,13 +175,13 @@ type Emoji struct {
 	FontSize int
 }
 
-func (w Word) GetFontSize() int  { return w.FontSize }
-func (b Break) GetFontSize() int { return b.FontSize }
-func (e Emoji) GetFontSize() int { return e.FontSize }
+func (w Word) GetFontSize() int           { return w.FontSize }
+func (b ParagraphBreak) GetFontSize() int { return b.FontSize }
+func (e Emoji) GetFontSize() int          { return e.FontSize }
 
-func (w Word) lineElement()  {}
-func (b Break) lineElement() {}
-func (e Emoji) lineElement() {}
+func (w Word) lineElement()           {}
+func (b ParagraphBreak) lineElement() {}
+func (e Emoji) lineElement()          {}
 
 func extractText(htmlText string, raw bool) []LineElement {
 	text := replaceEntityRefs(htmlText)
@@ -194,7 +201,7 @@ func extractText(htmlText string, raw bool) []LineElement {
 			if tagOrNot.IsTag {
 				tag := tagOrNot.Content
 				if tag == "p" {
-					r = append(r, Break{IsParagraph: true})
+					r = append(r, ParagraphBreak{FontSize: fontSize})
 				} else if tag == "i" {
 					isItalic = true
 				} else if tag == "/i" {
@@ -223,7 +230,6 @@ func extractText(htmlText string, raw bool) []LineElement {
 				}
 			}
 		}
-		r = append(r, Break{IsParagraph: false, FontSize: fontSize})
 	}
 	return r
 }
