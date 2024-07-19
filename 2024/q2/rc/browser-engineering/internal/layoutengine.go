@@ -21,10 +21,11 @@ type DisplayListItemContent interface {
 }
 
 type DisplayListItemText struct {
-	Text     string
-	IsItalic bool
-	IsBold   bool
-	BaseFont *ttf.Font
+	Text          string
+	IsItalic      bool
+	IsBold        bool
+	IsSuperscript bool
+	BaseFont      *ttf.Font
 }
 
 type DisplayListItemEmoji struct {
@@ -40,16 +41,14 @@ const LINE_SPACING float32 = 1.25
 const BASE_FONT string = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 
 type Engine struct {
-	htmlText                string
-	raw                     bool
-	fonts                   map[int]*ttf.Font
-	lineBuffer              []DisplayListItem
-	maxY                    int32
-	cursorX                 int32
-	cursorY                 int32
-	displayList             []DisplayListItem
-	currentLineHeight       int32
-	currentLineHeightSpaced int32
+	htmlText    string
+	raw         bool
+	fonts       map[int]*ttf.Font
+	lineBuffer  []DisplayListItem
+	maxY        int32
+	cursorX     int32
+	cursorY     int32
+	displayList []DisplayListItem
 }
 
 // if raw is true then text is rendered as-is, not treated as HTML
@@ -63,29 +62,27 @@ func (engine *Engine) Layout(width int32, height int32) DisplayList {
 	for _, elem := range extractText(engine.htmlText, engine.raw) {
 		engine.layoutOne(elem, width, height)
 	}
-	engine.flush()
+	engine.flush(false)
 
 	return DisplayList{Items: engine.displayList, MaxY: engine.maxY}
 }
 
 func (engine *Engine) layoutOne(elem LineElement, width int32, height int32) {
-	font := engine.loadFont(elem)
-	if font == nil {
-		return
-	}
-
-	var elemHeight int32
 	switch t := elem.(type) {
 	case Word:
-		wordWidth, wordHeight, err := font.SizeUTF8(t.Content)
+		font := engine.loadFont(t)
+		if font == nil {
+			return
+		}
+
+		wordWidth, _, err := font.SizeUTF8(t.Content)
 		if err != nil {
 			layoutWarning(fmt.Sprintf("error from font.SizeUTF8: %s", err.Error()))
 			return
 		}
-		elemHeight = int32(wordHeight)
 
 		if engine.cursorX+int32(wordWidth) > width {
-			engine.breakLine(false)
+			engine.flush(false)
 		}
 
 		spaceWidth, _, err := font.SizeUTF8(" ")
@@ -94,45 +91,73 @@ func (engine *Engine) layoutOne(elem LineElement, width int32, height int32) {
 			return
 		}
 
-		content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, BaseFont: font}
+		content := DisplayListItemText{Text: t.Content, IsItalic: t.IsItalic, IsBold: t.IsBold, IsSuperscript: t.IsSuperscript, BaseFont: font}
 		engine.lineBuffer = append(engine.lineBuffer, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
 		engine.cursorX += int32(wordWidth + spaceWidth)
-	case ParagraphBreak:
-		engine.breakLine(true)
+	case Break:
+		engine.flush(t.IsParagraph)
 		return
 	case Emoji:
 		content := DisplayListItemEmoji{Code: t.Code}
 		engine.lineBuffer = append(engine.lineBuffer, DisplayListItem{X: engine.cursorX, Y: engine.cursorY, Content: content})
+		// TODO: compute actual width
 		engine.cursorX += HSTEP
-		elemHeight = VSTEP
-	}
-
-	if engine.cursorY > engine.maxY {
-		engine.maxY = engine.cursorY + elemHeight
 	}
 
 	if engine.cursorX >= width {
-		engine.breakLine(false)
+		engine.flush(false)
 	}
 }
 
-func (engine *Engine) flush() {
+// we accumulate display items into the line buffer, and then flush them when we hit the end of the line.
+// flush() is responsible for determining the vertical position of elements (e.g., in case words have different
+// font sizes on the same line).
+func (engine *Engine) flush(isParagraph bool) {
+	if len(engine.lineBuffer) == 0 {
+		return
+	}
+
+	maxAscent := 0
+	maxDescent := 0
+
+	for _, elem := range engine.lineBuffer {
+		switch t := elem.Content.(type) {
+		case DisplayListItemText:
+			maxAscent = max(t.BaseFont.Ascent(), maxAscent)
+			// Descent() returns a negative value
+			maxDescent = max(-1*t.BaseFont.Descent(), maxDescent)
+			// TODO: handle other display list item content types
+		}
+	}
+
+	for i := range engine.lineBuffer {
+		elem := &engine.lineBuffer[i]
+		switch t := elem.Content.(type) {
+		case DisplayListItemText:
+			ascent := t.BaseFont.Ascent()
+			// superscript text is aligned at the top of the line
+			if !t.IsSuperscript {
+				elem.Y += int32(maxAscent - ascent)
+			}
+			// TODO: handle other display list item content types
+		}
+	}
+
 	engine.displayList = append(engine.displayList, engine.lineBuffer...)
+	engine.cursorX = 0
+
+	yInc := int32(float32(maxAscent)*1.25) + int32(maxDescent)
+	if isParagraph {
+		yInc *= 2
+	}
+
+	engine.cursorY += yInc
+	engine.maxY = max(engine.maxY, engine.cursorY)
 	engine.lineBuffer = []DisplayListItem{}
 }
 
-func (engine *Engine) breakLine(isParagraph bool) {
-	engine.flush()
-
-	engine.cursorX = 0
-	engine.cursorY += engine.currentLineHeightSpaced
-	if isParagraph {
-		engine.cursorY += engine.currentLineHeightSpaced
-	}
-}
-
-func (engine *Engine) loadFont(elem LineElement) *ttf.Font {
-	fontSize := elem.GetFontSize()
+func (engine *Engine) loadFont(word Word) *ttf.Font {
+	fontSize := word.FontSize
 	font, ok := engine.fonts[fontSize]
 	if !ok {
 		var err error
@@ -143,8 +168,6 @@ func (engine *Engine) loadFont(elem LineElement) *ttf.Font {
 		}
 		engine.fonts[fontSize] = font
 	}
-	engine.currentLineHeight = int32(font.Ascent() + font.Descent())
-	engine.currentLineHeightSpaced = int32(float32(engine.currentLineHeight) * LINE_SPACING)
 	return font
 }
 
@@ -156,39 +179,36 @@ func (engine *Engine) Cleanup() {
 
 type LineElement interface {
 	lineElement()
-	GetFontSize() int
 }
 
 type Word struct {
-	Content  string
-	IsItalic bool
-	IsBold   bool
-	FontSize int
+	Content       string
+	IsItalic      bool
+	IsBold        bool
+	IsSuperscript bool
+	FontSize      int
 }
 
-type ParagraphBreak struct {
-	FontSize int
+type Break struct {
+	IsParagraph bool
 }
 
 type Emoji struct {
-	Code     string
-	FontSize int
+	Code string
 }
 
-func (w Word) GetFontSize() int           { return w.FontSize }
-func (b ParagraphBreak) GetFontSize() int { return b.FontSize }
-func (e Emoji) GetFontSize() int          { return e.FontSize }
-
-func (w Word) lineElement()           {}
-func (b ParagraphBreak) lineElement() {}
-func (e Emoji) lineElement()          {}
+func (w Word) lineElement()  {}
+func (b Break) lineElement() {}
+func (e Emoji) lineElement() {}
 
 func extractText(htmlText string, raw bool) []LineElement {
 	text := replaceEntityRefs(htmlText)
 	r := []LineElement{}
 	isItalic := false
 	isBold := false
+	isSuperscript := false
 	fontSize := 16
+	fontSizeRestore := fontSize
 	for _, line := range strings.Split(text, "\n") {
 		var tagsOrNot []TagOrNot
 		if raw {
@@ -200,8 +220,10 @@ func extractText(htmlText string, raw bool) []LineElement {
 		for _, tagOrNot := range tagsOrNot {
 			if tagOrNot.IsTag {
 				tag := tagOrNot.Content
-				if tag == "p" {
-					r = append(r, ParagraphBreak{FontSize: fontSize})
+				if tag == "/p" {
+					r = append(r, Break{IsParagraph: true})
+				} else if tag == "br" {
+					r = append(r, Break{IsParagraph: false})
 				} else if tag == "i" {
 					isItalic = true
 				} else if tag == "/i" {
@@ -218,6 +240,13 @@ func extractText(htmlText string, raw bool) []LineElement {
 					fontSize -= 2
 				} else if tag == "/small" {
 					fontSize += 2
+				} else if tag == "sup" {
+					isSuperscript = true
+					fontSizeRestore = fontSize
+					fontSize /= 2
+				} else if tag == "/sup" {
+					isSuperscript = false
+					fontSize = fontSizeRestore
 				}
 			} else {
 				for _, word := range strings.Split(tagOrNot.Content, " ") {
@@ -226,7 +255,7 @@ func extractText(htmlText string, raw bool) []LineElement {
 					}
 
 					// TODO: detect emojis
-					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold, FontSize: fontSize})
+					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold, IsSuperscript: isSuperscript, FontSize: fontSize})
 				}
 			}
 		}
