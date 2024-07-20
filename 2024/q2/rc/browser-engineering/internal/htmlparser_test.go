@@ -37,7 +37,7 @@ func TestTreeBuilder(t *testing.T) {
 }
 
 func TestParseHtml(t *testing.T) {
-	parser := HtmlParser{}
+	parser := HtmlParser{disableImplicitTags: true}
 	root := parser.Parse("<p class=\"whatever\"><bold>Hello</bold> world</p>")
 
 	assertIsHtml(t, root, "p")
@@ -62,7 +62,7 @@ func TestParseHtml(t *testing.T) {
 }
 
 func TestParseMissingClosingTags(t *testing.T) {
-	parser := HtmlParser{}
+	parser := HtmlParser{disableImplicitTags: true}
 	root := parser.Parse("<p><i><bold>Hello")
 
 	assertIsHtml(t, root, "p")
@@ -74,6 +74,15 @@ func TestParseMissingClosingTags(t *testing.T) {
 	txt := &root.Children[0].Children[0].Children[0]
 	assertIsText(t, txt)
 	assertStrEqual(t, txt.Text, "Hello")
+}
+
+func TestParseImplicitTags(t *testing.T) {
+	parser := HtmlParser{}
+	root := parser.Parse("<p>Hello</p>")
+	assertStrEqual(t, root.String(), "<html><body><p>Hello</p></body></html>")
+
+	root = parser.Parse("<title>Title</title><p>Hello</p>")
+	assertStrEqual(t, root.String(), "<html><head><title>Title</title></head><body><p>Hello</p></body></html>")
 }
 
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {

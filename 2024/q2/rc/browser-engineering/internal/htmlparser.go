@@ -19,24 +19,29 @@ type HtmlElement struct {
 }
 
 type HtmlParser struct {
-	text  string
-	index int
-	start int
-	tb    TreeBuilder
+	text                string
+	index               int
+	start               int
+	tb                  TreeBuilder
+	disableImplicitTags bool
 }
 
 func (p *HtmlParser) Parse(htmlText string) *HtmlElement {
 	p.text = htmlText
 	p.index = 0
 	p.start = 0
+	p.tb = TreeBuilder{}
+
 	for !p.done() {
 		i := p.index
 		runeValue := p.ch()
 		if runeValue == '<' {
+			p.implicitTags("")
 			p.tb.Text(p.text[p.start:i])
 			p.readTag()
 		}
 	}
+	p.implicitTags("")
 	p.tb.Text(p.text[p.start:])
 	return p.tb.Tree()
 }
@@ -45,7 +50,7 @@ func (p *HtmlParser) done() bool {
 	return p.index >= len(p.text)
 }
 
-var SELF_CLOSING = map[string]bool{
+var SELF_CLOSING_TAGS = map[string]bool{
 	"area":   true,
 	"base":   true,
 	"br":     true,
@@ -60,6 +65,17 @@ var SELF_CLOSING = map[string]bool{
 	"source": true,
 	"track":  true,
 	"wbr":    true,
+}
+var HEAD_TAGS = map[string]bool{
+	"base":     true,
+	"basefont": true,
+	"bgsound":  true,
+	"noscript": true,
+	"link":     true,
+	"meta":     true,
+	"title":    true,
+	"style":    true,
+	"script":   true,
 }
 
 // invariant: p.index sits on the character *after* the opening bracket
@@ -77,6 +93,7 @@ func (p *HtmlParser) readTag() {
 	if isClosing {
 		p.tb.Close(tag)
 	} else {
+		p.implicitTags(tag)
 		p.tb.Open(tag, attrs)
 		if isSelfClosing(tag) {
 			p.tb.Close(tag)
@@ -85,7 +102,12 @@ func (p *HtmlParser) readTag() {
 }
 
 func isSelfClosing(tag string) bool {
-	ok1, ok2 := SELF_CLOSING[tag]
+	ok1, ok2 := SELF_CLOSING_TAGS[tag]
+	return ok2 && ok1
+}
+
+func isHeadTag(tag string) bool {
+	ok1, ok2 := HEAD_TAGS[tag]
 	return ok2 && ok1
 }
 
@@ -122,6 +144,45 @@ func (p *HtmlParser) readTagAttrs() map[string]string {
 	// TODO: handle trailing '/' for self-closing tags
 
 	return r
+}
+
+func (p *HtmlParser) implicitTags(tag string) {
+	if p.disableImplicitTags {
+		return
+	}
+
+	for {
+		openTags := len(p.tb.stack)
+		var lastTag string
+		var secondToLastTag string
+		if openTags >= 2 {
+			lastTag = p.tb.stack[openTags-1].Tag
+			secondToLastTag = p.tb.stack[openTags-2].Tag
+		} else if openTags == 1 {
+			lastTag = p.tb.stack[0].Tag
+		}
+
+		if lastTag == "" && tag != "html" {
+			// if no tags are open and we see something other than <html>, we have to open <html> first
+			parserWarning(fmt.Sprintf("implicitly opening <html> tag ahead of %q", tag))
+			p.tb.Open("html", map[string]string{})
+		} else if openTags == 1 && lastTag == "html" && tag != "head" && tag != "body" && tag != "" {
+			// if only <html> is open and we see something other than <head> or <body>, we must open one of thsoe first
+			if isHeadTag(tag) {
+				parserWarning(fmt.Sprintf("implicitly opening <head> tag ahead of %q", tag))
+				p.tb.Open("head", map[string]string{})
+			} else {
+				parserWarning(fmt.Sprintf("implicitly opening <body> tag ahead of %q", tag))
+				p.tb.Open("body", map[string]string{})
+			}
+		} else if openTags == 2 && lastTag == "head" && secondToLastTag == "html" && tag != "" && !isHeadTag(tag) {
+			// if we are in <head> and we see a non-head tag, we must close the <head>
+			parserWarning(fmt.Sprintf("implicitly closing <head> tag ahead of %q", tag))
+			p.tb.Close("head")
+		} else {
+			break
+		}
+	}
 }
 
 func (p *HtmlParser) readUntil(delim rune) string {
@@ -227,6 +288,20 @@ func printTree(root *HtmlElement, indent int) {
 		}
 	} else {
 		fmt.Printf("%d char(s) of text\n", len(root.Text))
+	}
+}
+
+func (e HtmlElement) String() string {
+	if e.Tag != "" {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("<%s>", e.Tag))
+		for _, child := range e.Children {
+			sb.WriteString(child.String())
+		}
+		sb.WriteString(fmt.Sprintf("</%s>", e.Tag))
+		return sb.String()
+	} else {
+		return e.Text
 	}
 }
 
