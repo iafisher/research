@@ -5,7 +5,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/veandco/go-sdl2/ttf"
 )
@@ -41,7 +40,7 @@ const LINE_SPACING float32 = 1.25
 const BASE_FONT string = "/System/Library/Fonts/Supplemental/Arial Unicode.ttf"
 
 type Engine struct {
-	htmlText    string
+	htmlTree    *HtmlElement
 	raw         bool
 	fonts       map[int]*ttf.Font
 	lineBuffer  []DisplayListItem
@@ -59,7 +58,8 @@ func (engine *Engine) Layout(width int32, height int32) DisplayList {
 	engine.cursorY = 0
 	engine.fonts = make(map[int]*ttf.Font)
 
-	for _, elem := range extractText(engine.htmlText, engine.raw) {
+	var tf TreeFlattener
+	for _, elem := range tf.FlattenTree(engine.htmlTree) {
 		engine.layoutOne(elem, width, height)
 	}
 	engine.flush(false)
@@ -201,127 +201,113 @@ func (w Word) lineElement()  {}
 func (b Break) lineElement() {}
 func (e Emoji) lineElement() {}
 
-func extractText(htmlText string, raw bool) []LineElement {
-	text := replaceEntityRefs(htmlText)
-	r := []LineElement{}
-	isItalic := false
-	isBold := false
-	isSuperscript := false
-	fontSize := 16
-	fontSizeRestore := fontSize
-	for _, line := range strings.Split(text, "\n") {
-		var tagsOrNot []TagOrNot
-		if raw {
-			tagsOrNot = []TagOrNot{{Content: line, IsTag: false}}
-		} else {
-			tagsOrNot = stripTags(line)
-		}
-
-		for _, tagOrNot := range tagsOrNot {
-			if tagOrNot.IsTag {
-				tag := tagOrNot.Content
-				if tag == "/p" {
-					r = append(r, Break{IsParagraph: true})
-				} else if tag == "br" {
-					r = append(r, Break{IsParagraph: false})
-				} else if tag == "i" {
-					isItalic = true
-				} else if tag == "/i" {
-					isItalic = false
-				} else if tag == "b" {
-					isBold = true
-				} else if tag == "/b" {
-					isBold = false
-				} else if tag == "big" {
-					fontSize += 4
-				} else if tag == "/big" {
-					fontSize -= 4
-				} else if tag == "small" {
-					fontSize -= 2
-				} else if tag == "/small" {
-					fontSize += 2
-				} else if tag == "sup" {
-					isSuperscript = true
-					fontSizeRestore = fontSize
-					fontSize /= 2
-				} else if tag == "/sup" {
-					isSuperscript = false
-					fontSize = fontSizeRestore
-				}
-			} else {
-				for _, word := range strings.Split(tagOrNot.Content, " ") {
-					if word == "" {
-						continue
-					}
-
-					// TODO: detect emojis
-					r = append(r, Word{Content: word, IsItalic: isItalic, IsBold: isBold, IsSuperscript: isSuperscript, FontSize: fontSize})
-				}
-			}
-		}
-	}
-	return r
+type TreeWalker interface {
+	StartTag(string, map[string]string)
+	EndTag(string)
+	Text(string)
 }
 
-type TagOrNot struct {
-	Content string
-	IsTag   bool
+type TreeFlattener struct {
+	lineElements    []LineElement
+	isItalic        bool
+	isBold          bool
+	isSuperscript   bool
+	fontSize        int
+	fontSizeRestore int
 }
 
-func stripTags(htmlText string) []TagOrNot {
-	inTag := false
-	startOfTag := -1
-	reader := CharReader{Content: htmlText}
-
-	r := []TagOrNot{}
-	for !reader.Done() {
-		runeValue := reader.Next()
-		if !inTag {
-			if runeValue == '<' {
-				startOfTag = reader.Index
-				inTag = true
-				continue
-			}
-		} else {
-			if runeValue == '>' {
-				fullTagBody := htmlText[startOfTag : reader.Index-1]
-				r = append(r, TagOrNot{Content: strings.SplitN(fullTagBody, " ", 2)[0], IsTag: true})
-				inTag = false
-			}
-			continue
+func walkTree(tree *HtmlElement, walker TreeWalker) {
+	if tree.Tag == "" {
+		walker.Text(tree.Text)
+	} else {
+		walker.StartTag(tree.Tag, tree.Attrs)
+		for i := range tree.Children {
+			walkTree(&tree.Children[i], walker)
 		}
-
-		r = append(r, TagOrNot{Content: string(runeValue), IsTag: false})
+		walker.EndTag(tree.Tag)
 	}
-
-	return mergeText(r)
 }
 
-func mergeText(tags []TagOrNot) []TagOrNot {
-	r := []TagOrNot{}
-	var sb strings.Builder
-	for _, tag := range tags {
-		if tag.IsTag {
-			if sb.Len() > 0 {
-				r = append(r, TagOrNot{Content: sb.String(), IsTag: false})
-				sb.Reset()
-			}
-			r = append(r, tag)
-		} else {
-			sb.WriteString(tag.Content)
+const DEFAULT_FONT_SIZE = 16
+
+// font size increment for <big> tags
+const BIG_FONT_SIZE_INCREMENT = 4
+
+// font size decrement for <small> tags
+const SMALL_FONT_SIZE_DECREMENT = 2
+
+// font size factor (divided by) for <sup> tags
+const SUP_FONT_SIZE_FACTOR = 2
+
+func (tf *TreeFlattener) FlattenTree(tree *HtmlElement) []LineElement {
+	tf.lineElements = []LineElement{}
+	tf.isItalic = false
+	tf.isBold = false
+	tf.isSuperscript = false
+	tf.fontSize = DEFAULT_FONT_SIZE
+	tf.fontSizeRestore = tf.fontSize
+
+	walkTree(tree, tf)
+
+	return tf.lineElements
+}
+
+func (tf *TreeFlattener) StartTag(tag string, attrs map[string]string) {
+	if tag == "i" {
+		tf.isItalic = true
+	} else if tag == "b" {
+		tf.isBold = true
+	} else if tag == "big" {
+		tf.fontSize += BIG_FONT_SIZE_INCREMENT
+	} else if tag == "small" {
+		tf.fontSize -= SMALL_FONT_SIZE_DECREMENT
+	} else if tag == "sup" {
+		if !tf.isSuperscript {
+			tf.isSuperscript = true
+			tf.fontSizeRestore = tf.fontSize
+			tf.fontSize /= SUP_FONT_SIZE_FACTOR
 		}
+	} else if tag == "br" {
+		tf.lineElements = append(tf.lineElements, Break{IsParagraph: false})
 	}
+}
 
-	if sb.Len() > 0 {
-		r = append(r, TagOrNot{Content: sb.String(), IsTag: false})
+func (tf *TreeFlattener) EndTag(tag string) {
+	if tag == "i" {
+		tf.isItalic = false
+	} else if tag == "b" {
+		tf.isBold = false
+	} else if tag == "big" {
+		tf.fontSize -= BIG_FONT_SIZE_INCREMENT
+	} else if tag == "small" {
+		tf.fontSize += SMALL_FONT_SIZE_DECREMENT
+	} else if tag == "sup" {
+		tf.isSuperscript = false
+		tf.fontSize = tf.fontSizeRestore
+	} else if tag == "p" {
+		tf.lineElements = append(tf.lineElements, Break{IsParagraph: true})
 	}
+}
 
-	return r
+func (tf *TreeFlattener) Text(text string) {
+	// TODO: detect emojis
+	tf.lineElements = append(tf.lineElements, tf.makeWord(text))
+}
+
+func (tf *TreeFlattener) makeWord(text string) Word {
+	return Word{
+		// TODO: more principled handling of whitespace
+		Content:       replaceEntityRefs(strings.ReplaceAll(text, "\n", " ")),
+		IsItalic:      tf.isItalic,
+		IsBold:        tf.isBold,
+		IsSuperscript: tf.isSuperscript,
+		FontSize:      tf.fontSize,
+	}
 }
 
 func replaceEntityRefs(text string) string {
 	// TODO: compile once
-	pat := regexp.MustCompile("\\&([A-Za-z]+;)")
+	pat := regexp.MustCompile(`\&([A-Za-z]+;)`)
 	return pat.ReplaceAllStringFunc(text, func(code string) string {
 		code = strings.ToLower(code)
 		if code == "&gt;" {
@@ -342,38 +328,6 @@ func lookUpEmojiCode(runeValue rune) string {
 	} else {
 		return ""
 	}
-}
-
-func readEntityRef(reader *CharReader) string {
-	start := reader.Index
-	for !reader.Done() {
-		c := reader.Next()
-		if c == ';' {
-			return reader.Content[start : reader.Index-1]
-		}
-	}
-
-	return ""
-}
-
-type CharReader struct {
-	Content string
-	Index   int
-}
-
-func (cr *CharReader) Next() rune {
-	if cr.Done() {
-		return 0
-	}
-
-	// TODO: probably very inefficient?
-	runeValue, width := utf8.DecodeRuneInString(cr.Content[cr.Index:])
-	cr.Index += width
-	return runeValue
-}
-
-func (cr *CharReader) Done() bool {
-	return cr.Index >= len(cr.Content)
 }
 
 func layoutWarning(msg string) {
