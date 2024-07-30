@@ -167,30 +167,75 @@ func (p *HtmlParser) readTagName() string {
 }
 
 func (p *HtmlParser) readTagAttrs() map[string]string {
-	raw := p.readUntil('>')
-	// TODO: handle quoted attributes with whitespace
-	parts := strings.Split(raw, " ")
-
 	r := map[string]string{}
-	for _, part := range parts {
-		if len(part) == 0 {
-			continue
+	for {
+		p.skipWhitespace()
+		isOver := p.chIf('>')
+		if isOver {
+			break
 		}
 
-		subparts := strings.SplitN(part, "=", 2)
-		key := strings.ToLower(subparts[0])
-		if len(subparts) == 1 {
-			r[key] = ""
+		key, value := p.readOneAttr()
+		r[key] = value
+	}
+	return r
+}
+
+func (p *HtmlParser) readOneAttr() (string, string) {
+	start := p.index
+	for !p.done() {
+		runeValue, width := p.decodeOne()
+		if unicode.IsSpace(runeValue) {
+			return p.text[start:p.index], ""
+		} else if runeValue == '=' {
+			break
 		} else {
-			// TODO: handle backslash escapes
-			val := strings.Trim(subparts[1], "\"")
-			r[key] = val
+			p.index += width
 		}
 	}
 
-	// TODO: handle trailing '/' for self-closing tags
+	name := p.text[start:p.index]
+	value := ""
+	if p.startsWith("=") {
+		p.ch()
+		value = p.readOneAttrValue()
+	}
+	return name, value
+}
 
-	return r
+func (p *HtmlParser) readOneAttrValue() string {
+	if p.startsWith("\"") {
+		return p.readQuotedString()
+	} else {
+		start := p.index
+		for !p.done() {
+			runeValue, width := p.decodeOne()
+			if unicode.IsSpace(runeValue) {
+				break
+			} else {
+				p.index += width
+			}
+		}
+		return p.text[start:p.index]
+	}
+}
+
+func (p *HtmlParser) readQuotedString() string {
+	p.ch()
+	start := p.index
+	end := len(p.text)
+	for !p.done() {
+		index := p.index
+		runeValue := p.ch()
+		if runeValue == '"' {
+			end = index
+			break
+		} else if runeValue == '\\' {
+			// TODO: actually decode backslash escapes
+			p.ch()
+		}
+	}
+	return p.text[start:end]
 }
 
 func (p *HtmlParser) implicitTags(tag string) {
@@ -242,6 +287,17 @@ func (p *HtmlParser) readUntil(delim rune) string {
 		}
 	}
 	return p.text[start:]
+}
+
+func (p *HtmlParser) skipWhitespace() {
+	for !p.done() {
+		runeValue, width := p.decodeOne()
+		if unicode.IsSpace(runeValue) {
+			p.index += width
+		} else {
+			break
+		}
+	}
 }
 
 func (p *HtmlParser) chIf(lookingFor rune) bool {

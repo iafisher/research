@@ -122,6 +122,12 @@ func TestScriptElement(t *testing.T) {
 	assertStrEqual(t, root.String(), "<script>x < 5 && x > 0</script>")
 }
 
+func TestQuotedAttributes(t *testing.T) {
+	parser := HtmlParser{disableImplicitTags: true}
+	root := parser.Parse("<div data-whatever=\"arbitrary data and <tag>s\"></div>")
+	assertStrEqual(t, root.String(), "<div data-whatever=\"arbitrary data and <tag>s\"></div>")
+}
+
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {
 	t.Helper()
 	if elem.Tag == "" {
