@@ -97,6 +97,15 @@ func TestParseComments(t *testing.T) {
 	assertStrEqual(t, root.String(), "<p>Hello</p>")
 }
 
+func TestParseNestedParagraphs(t *testing.T) {
+	parser := HtmlParser{disableImplicitTags: true}
+	root := parser.Parse("<div><p>Hello<p>World!</p></div>")
+	assertStrEqual(t, root.String(), "<div><p>Hello</p><p>World!</p></div>")
+
+	root = parser.Parse("<div><P><b class=\"whatever\">Hello<p>World!</b></p></div>")
+	assertStrEqual(t, root.String(), "<div><p><b class=\"whatever\">Hello</b></p><p><b class=\"whatever\">World!</b></p></div>")
+}
+
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {
 	t.Helper()
 	if elem.Tag == "" {

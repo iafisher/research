@@ -281,6 +281,9 @@ type TreeBuilder struct {
 }
 
 func (tb *TreeBuilder) Open(tag string, attrs map[string]string) {
+	tag = strings.ToLower(tag)
+	elementsToReopen := tb.maybeCloseParent(tag)
+
 	elem := HtmlElement{Tag: tag, Attrs: attrs}
 	if len(tb.stack) == 0 {
 		tb.root = elem
@@ -290,6 +293,8 @@ func (tb *TreeBuilder) Open(tag string, attrs map[string]string) {
 		current.Children = append(current.Children, elem)
 		tb.stack = append(tb.stack, &current.Children[len(current.Children)-1])
 	}
+
+	tb.maybeReopenElements(elementsToReopen)
 }
 
 func (tb *TreeBuilder) Close(tag string) {
@@ -324,6 +329,51 @@ func (tb *TreeBuilder) Text(text string) {
 func (tb *TreeBuilder) Tree() *HtmlElement {
 	setParents(&tb.root)
 	return &tb.root
+}
+
+func (tb *TreeBuilder) maybeCloseParent(tag string) []*HtmlElement {
+	// <p>X<p>Y</p> should be interpreted as <p>X</p><p>Y</p>
+	// i.e., the nested <p> opens a new paragraph
+	// this may require us to close and reopen tags that were open if <p> is not the direct parent
+	// e.g., <p><b>X<p>Y</b></p> becomes <p><b>X</b></p><p><b>Y</b></p> (notice how <b> is reopened)
+
+	if len(tb.stack) == 0 || tag != "p" {
+		return []*HtmlElement{}
+	}
+
+	index := tb.findLastOpenTag("p")
+	if index == -1 {
+		return []*HtmlElement{}
+	}
+
+	tagsToReopen := tb.stack[index+1:]
+	numToClose := len(tb.stack) - index
+
+	for numToClose > 0 {
+		tb.closeLast()
+		numToClose--
+	}
+
+	return tagsToReopen
+}
+
+func (tb *TreeBuilder) maybeReopenElements(elems []*HtmlElement) {
+	for _, elem := range elems {
+		tb.Open(elem.Tag, elem.Attrs)
+	}
+}
+
+func (tb *TreeBuilder) closeLast() {
+	tb.Close(tb.stack[len(tb.stack)-1].Tag)
+}
+
+func (tb *TreeBuilder) findLastOpenTag(tag string) int {
+	for i := len(tb.stack) - 1; i >= 0; i-- {
+		if tb.stack[i].Tag == tag {
+			return i
+		}
+	}
+	return -1
 }
 
 func setParents(elem *HtmlElement) {
