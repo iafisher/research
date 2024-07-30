@@ -106,6 +106,16 @@ func TestParseNestedParagraphs(t *testing.T) {
 	assertStrEqual(t, root.String(), "<div><p><b class=\"whatever\">Hello</b></p><p><b class=\"whatever\">World!</b></p></div>")
 }
 
+func TestParseNestedListItems(t *testing.T) {
+	parser := HtmlParser{disableImplicitTags: true}
+	root := parser.Parse("<ul><li>one<li>two</li></ul>")
+	assertStrEqual(t, root.String(), "<ul><li>one</li><li>two</li></ul>")
+
+	// nested list
+	root = parser.Parse("<ul><li>one<ol><li>nested</li></ol></li></ul>")
+	assertStrEqual(t, root.String(), "<ul><li>one<ol><li>nested</li></ol></li></ul>")
+}
+
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {
 	t.Helper()
 	if elem.Tag == "" {

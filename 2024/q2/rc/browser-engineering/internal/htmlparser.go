@@ -337,11 +337,16 @@ func (tb *TreeBuilder) maybeCloseParent(tag string) []*HtmlElement {
 	// this may require us to close and reopen tags that were open if <p> is not the direct parent
 	// e.g., <p><b>X<p>Y</b></p> becomes <p><b>X</b></p><p><b>Y</b></p> (notice how <b> is reopened)
 
-	if len(tb.stack) == 0 || tag != "p" {
+	if len(tb.stack) == 0 || (tag != "p" && tag != "li") {
 		return []*HtmlElement{}
 	}
 
-	index := tb.findLastOpenTag("p")
+	stopAt := []string{}
+	if tag == "li" {
+		stopAt = append(stopAt, "ul", "ol")
+	}
+
+	index := tb.findLastOpenTag(tag, stopAt)
 	if index == -1 {
 		return []*HtmlElement{}
 	}
@@ -367,9 +372,17 @@ func (tb *TreeBuilder) closeLast() {
 	tb.Close(tb.stack[len(tb.stack)-1].Tag)
 }
 
-func (tb *TreeBuilder) findLastOpenTag(tag string) int {
+func (tb *TreeBuilder) findLastOpenTag(tagToSearch string, stopAt []string) int {
 	for i := len(tb.stack) - 1; i >= 0; i-- {
-		if tb.stack[i].Tag == tag {
+		thisTag := tb.stack[i].Tag
+
+		for _, stopAtTag := range stopAt {
+			if thisTag == stopAtTag {
+				return -1
+			}
+		}
+
+		if thisTag == tagToSearch {
 			return i
 		}
 	}
