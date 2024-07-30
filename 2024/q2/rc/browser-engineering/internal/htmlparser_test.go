@@ -85,6 +85,18 @@ func TestParseImplicitTags(t *testing.T) {
 	assertStrEqual(t, root.String(), "<html><head><title>Title</title></head><body><p>Hello</p></body></html>")
 }
 
+func TestParseComments(t *testing.T) {
+	parser := HtmlParser{disableImplicitTags: true}
+	root := parser.Parse("<p>Hello<!-- a comment --> world!</p>")
+	assertStrEqual(t, root.String(), "<p>Hello world!</p>")
+
+	root = parser.Parse("<p>Hello<!-- a comment with a tag: <p> --></p>")
+	assertStrEqual(t, root.String(), "<p>Hello</p>")
+
+	root = parser.Parse("<p>Hello<!--></p>")
+	assertStrEqual(t, root.String(), "<p>Hello</p>")
+}
+
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {
 	t.Helper()
 	if elem.Tag == "" {

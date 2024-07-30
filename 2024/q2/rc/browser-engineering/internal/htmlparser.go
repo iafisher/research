@@ -18,6 +18,27 @@ type HtmlElement struct {
 	Parent   *HtmlElement
 }
 
+func (e HtmlElement) String() string {
+	if e.Text != "" {
+		return e.Text
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<")
+	sb.WriteString(e.Tag)
+	for key, value := range e.Attrs {
+		sb.WriteString(fmt.Sprintf(" %s=%s", key, quote(value)))
+	}
+	sb.WriteString(">")
+
+	for _, child := range e.Children {
+		sb.WriteString(child.String())
+	}
+
+	sb.WriteString(fmt.Sprintf("</%s>", e.Tag))
+	return sb.String()
+}
+
 type HtmlParser struct {
 	text                string
 	index               int
@@ -80,6 +101,11 @@ var HEAD_TAGS = map[string]bool{
 
 // invariant: p.index sits on the character *after* the opening bracket
 func (p *HtmlParser) readTag() {
+	if p.startsWith("!--") {
+		p.readComment()
+		return
+	}
+
 	isClosing := p.chIf('/')
 	tag := p.readTagName()
 	attrs := p.readTagAttrs()
@@ -99,6 +125,18 @@ func (p *HtmlParser) readTag() {
 			p.tb.Close(tag)
 		}
 	}
+}
+
+func (p *HtmlParser) readComment() {
+	for !p.done() && !p.startsWith("-->") {
+		p.ch()
+	}
+
+	if p.startsWith("-->") {
+		p.index += 3
+	}
+
+	p.start = p.index
 }
 
 func isSelfClosing(tag string) bool {
@@ -130,6 +168,10 @@ func (p *HtmlParser) readTagAttrs() map[string]string {
 
 	r := map[string]string{}
 	for _, part := range parts {
+		if len(part) == 0 {
+			continue
+		}
+
 		subparts := strings.SplitN(part, "=", 2)
 		key := strings.ToLower(subparts[0])
 		if len(subparts) == 1 {
@@ -197,6 +239,17 @@ func (p *HtmlParser) readUntil(delim rune) string {
 	return p.text[start:]
 }
 
+// func (p *HtmlParser) readUntilStr(delim string) string {
+// 	start := p.index
+// 	for !p.done() {
+// 		i := p.index
+// 		if strings.HasPrefix(p.text[i:], delim) {
+// 			return p.text[start:i]
+// 		}
+// 	}
+// 	return p.text[start:]
+// }
+
 func (p *HtmlParser) chIf(lookingFor rune) bool {
 	runeValue, width := p.decodeOne()
 	if runeValue == lookingFor {
@@ -211,6 +264,10 @@ func (p *HtmlParser) ch() rune {
 	r, width := p.decodeOne()
 	p.index += width
 	return r
+}
+
+func (p *HtmlParser) startsWith(prefix string) bool {
+	return strings.HasPrefix(p.text[p.index:], prefix)
 }
 
 func (p *HtmlParser) decodeOne() (rune, int) {
@@ -291,20 +348,10 @@ func printTree(root *HtmlElement, indent int) {
 	}
 }
 
-func (e HtmlElement) String() string {
-	if e.Tag != "" {
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("<%s>", e.Tag))
-		for _, child := range e.Children {
-			sb.WriteString(child.String())
-		}
-		sb.WriteString(fmt.Sprintf("</%s>", e.Tag))
-		return sb.String()
-	} else {
-		return e.Text
-	}
-}
-
 func parserWarning(msg string) {
 	fmt.Fprintf(os.Stderr, "parser: warning: %s\n", msg)
+}
+
+func quote(s string) string {
+	return fmt.Sprintf("\"%s\"", strings.ReplaceAll(s, "\"", "\\\""))
 }
