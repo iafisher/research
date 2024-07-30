@@ -45,6 +45,7 @@ type HtmlParser struct {
 	start               int
 	tb                  TreeBuilder
 	disableImplicitTags bool
+	inScriptTag         bool
 }
 
 func (p *HtmlParser) Parse(htmlText string) *HtmlElement {
@@ -56,7 +57,7 @@ func (p *HtmlParser) Parse(htmlText string) *HtmlElement {
 	for !p.done() {
 		i := p.index
 		runeValue := p.ch()
-		if runeValue == '<' {
+		if runeValue == '<' && (!p.inScriptTag || p.startsWith("/script>")) {
 			p.implicitTags("")
 			p.tb.Text(p.text[p.start:i])
 			p.readTag()
@@ -114,6 +115,10 @@ func (p *HtmlParser) readTag() {
 	// ignore <!doctype> declaration and comments
 	if strings.HasPrefix(tag, "!") {
 		return
+	}
+
+	if tag == "script" {
+		p.inScriptTag = !isClosing
 	}
 
 	if isClosing {
@@ -238,17 +243,6 @@ func (p *HtmlParser) readUntil(delim rune) string {
 	}
 	return p.text[start:]
 }
-
-// func (p *HtmlParser) readUntilStr(delim string) string {
-// 	start := p.index
-// 	for !p.done() {
-// 		i := p.index
-// 		if strings.HasPrefix(p.text[i:], delim) {
-// 			return p.text[start:i]
-// 		}
-// 	}
-// 	return p.text[start:]
-// }
 
 func (p *HtmlParser) chIf(lookingFor rune) bool {
 	runeValue, width := p.decodeOne()

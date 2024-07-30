@@ -116,6 +116,12 @@ func TestParseNestedListItems(t *testing.T) {
 	assertStrEqual(t, root.String(), "<ul><li>one<ol><li>nested</li></ol></li></ul>")
 }
 
+func TestScriptElement(t *testing.T) {
+	parser := HtmlParser{disableImplicitTags: true}
+	root := parser.Parse("<script>x < 5 && x > 0</script>")
+	assertStrEqual(t, root.String(), "<script>x < 5 && x > 0</script>")
+}
+
 func assertIsHtml(t *testing.T, elem *HtmlElement, tag string) {
 	t.Helper()
 	if elem.Tag == "" {
